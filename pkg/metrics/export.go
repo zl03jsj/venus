@@ -33,7 +33,7 @@ func RegisterPrometheusEndpoint(cfg *config.MetricsConfig) error {
 		return err
 	}
 
-	_, promAddr, err := manet.DialArgs(promma) //nolint
+	_, promAddr, err := manet.DialArgs(promma) // nolint
 	if err != nil {
 		return err
 	}
@@ -68,12 +68,18 @@ func RegisterJaeger(name string, cfg *config.TraceConfig) error {
 	if !cfg.JaegerTracingEnabled {
 		return nil
 	}
+
+	if len(cfg.ServerName) != 0 {
+		name = cfg.ServerName
+	}
+
 	je, err := jaeger.NewExporter(jaeger.Options{
-		CollectorEndpoint: cfg.JaegerEndpoint,
+		AgentEndpoint: cfg.JaegerEndpoint,
 		Process: jaeger.Process{
 			ServiceName: name,
 		},
 	})
+
 	if err != nil {
 		return err
 	}
