@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"github.com/filecoin-project/venus/pkg/statemanger"
 	"github.com/filecoin-project/venus/pkg/vm"
 	"time"
 
@@ -25,8 +26,8 @@ import (
 )
 
 // ChainSubmodule enhances the `Node` with chain capabilities.
-type ChainSubmodule struct { //nolint
-	ChainReader  *chain.Store
+type ChainSubmodule struct { // nolint
+	ChainStore   *chain.Store
 	MessageStore *chain.MessageStore
 	Sampler      *chain.Sampler
 	Processor    *consensus.DefaultProcessor
@@ -38,6 +39,7 @@ type ChainSubmodule struct { //nolint
 
 	config chainConfig
 
+	Stmgr *statemanger.Stmgr
 	// Wait for confirm message
 	Waiter *chain.Waiter
 }
@@ -62,8 +64,9 @@ func NewChainSubmodule(ctx context.Context,
 	verifier ffiwrapper.Verifier,
 ) (*ChainSubmodule, error) {
 	// initialize chain store
-	chainStore := chain.NewStore(repo.ChainDatastore(), blockstore.CborStore, blockstore.Blockstore, repo.Config().NetworkParams.ForkUpgradeParam, config.GenesisCid())
-	//drand
+	chainStore := chain.NewStore(repo.ChainDatastore(), blockstore.CborStore, blockstore.Blockstore,
+		repo.Config().NetworkParams.ForkUpgradeParam, config.GenesisCid())
+	// drand
 	genBlk, err := chainStore.GetGenesisBlock(context.TODO())
 	if err != nil {
 		return nil, err
@@ -86,7 +89,7 @@ func NewChainSubmodule(ctx context.Context,
 	waiter := chain.NewWaiter(chainStore, messageStore, blockstore.Blockstore, blockstore.CborStore)
 
 	store := &ChainSubmodule{
-		ChainReader:  chainStore,
+		ChainStore:   chainStore,
 		MessageStore: messageStore,
 		Processor:    processor,
 		SystemCall:   syscalls,
@@ -96,7 +99,7 @@ func NewChainSubmodule(ctx context.Context,
 		Waiter:       waiter,
 		CheckPoint:   chainStore.GetCheckPoint(),
 	}
-	err = store.ChainReader.Load(context.TODO())
+	err = store.ChainStore.Load(context.TODO())
 	if err != nil {
 		return nil, err
 	}
@@ -108,12 +111,12 @@ func (chain *ChainSubmodule) Start(ctx context.Context) error {
 	return chain.Fork.Start(ctx)
 }
 
-//Stop stop the chain head event
+// Stop stop the chain head event
 func (chain *ChainSubmodule) Stop(ctx context.Context) {
-	chain.ChainReader.Stop()
+	chain.ChainStore.Stop()
 }
 
-//API chain module api implement
+// API chain module api implement
 func (chain *ChainSubmodule) API() apiface.IChain {
 	return &chainAPI{
 		IAccount:    NewAccountAPI(chain),

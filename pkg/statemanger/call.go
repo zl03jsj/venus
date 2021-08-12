@@ -1,15 +1,15 @@
-package consensus
+package statemanger
 
 import (
 	"context"
 	"fmt"
+	"github.com/filecoin-project/venus/pkg/consensus"
+	"github.com/filecoin-project/venus/pkg/state"
 
 	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-state-types/abi"
 	acrypto "github.com/filecoin-project/go-state-types/crypto"
 	"github.com/filecoin-project/venus/pkg/crypto"
-	state2 "github.com/filecoin-project/venus/pkg/state"
-
-	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/ipfs/go-cid"
 	cbor "github.com/ipfs/go-ipld-cbor"
 	xerrors "github.com/pkg/errors"
@@ -22,23 +22,23 @@ import (
 	"github.com/filecoin-project/venus/pkg/vm"
 )
 
-//CallWithGas used to estimate message gaslimit, for each incoming message ,should execute after priorMsg in mpool
-func (c *Expected) CallWithGas(ctx context.Context, msg *types.UnsignedMessage, priorMsgs []types.ChainMsg, ts *types.TipSet) (*vm.Ret, error) {
+// CallWithGas used to estimate message gaslimit, for each incoming message ,should execute after priorMsg in mpool
+func (c *Stmgr) CallWithGas(ctx context.Context, msg *types.UnsignedMessage, priorMsgs []types.ChainMsg, ts *types.TipSet) (*vm.Ret, error) {
 	var (
 		err       error
 		stateRoot cid.Cid
+		view      *state.View
 	)
 
 	if ts == nil {
-		ts = c.chainState.GetHead()
-
+		ts = c.cs.GetHead()
 		// Search back till we find a height with no fork, or we reach the beginning.
 		// We need the _previous_ height to have no fork, because we'll
 		// run the fork logic in `sm.TipSetState`. We need the _current_
 		// height to have no fork, because we'll run it inside this
 		// function before executing the given message.
 		for ts.Height() > 0 && (c.fork.HasExpensiveFork(ctx, ts.Height()) || c.fork.HasExpensiveFork(ctx, ts.Height()-1)) {
-			ts, err = c.chainState.GetTipSet(ts.Parents())
+			ts, err = c.cs.GetTipSet(ts.Parents())
 			if err != nil {
 				return nil, xerrors.Errorf("failed to find a non-forking epoch: %v", err)
 			}
@@ -50,19 +50,15 @@ func (c *Expected) CallWithGas(ctx context.Context, msg *types.UnsignedMessage, 
 		return nil, fork.ErrExpensiveFork
 	}
 
-	stateRoot, err = c.chainState.GetTipSetStateRoot(ts)
-	if err != nil {
+	if stateRoot, view, err = c.StateView(ctx, ts); err != nil {
 		return nil, err
 	}
 
-	rnd := HeadRandomness{
-		Chain: c.rnd,
-		Head:  ts.Key(),
-	}
+	rnd := consensus.HeadRandomness{Chain: c.cs, Head: ts.Key()}
 
 	vmOption := vm.VmOption{
 		CircSupplyCalculator: func(ctx context.Context, epoch abi.ChainEpoch, tree tree.Tree) (abi.TokenAmount, error) {
-			cs, err := c.chainState.GetCirculatingSupplyDetailed(ctx, epoch, tree)
+			cs, err := c.cs.GetCirculatingSupplyDetailed(ctx, epoch, tree)
 			if err != nil {
 				return abi.TokenAmount{}, err
 			}
@@ -72,9 +68,9 @@ func (c *Expected) CallWithGas(ctx context.Context, msg *types.UnsignedMessage, 
 		Rnd:               &rnd,
 		BaseFee:           ts.At(0).ParentBaseFee,
 		Epoch:             ts.Height(),
-		GasPriceSchedule:  c.gasPirceSchedule,
+		GasPriceSchedule:  c.gasSchedule,
 		PRoot:             stateRoot,
-		Bsstore:           c.bstore,
+		Bsstore:           c.cs.Blockstore(),
 		SysCallsImpl:      c.syscallsImpl,
 		Fork:              c.fork,
 	}
@@ -100,8 +96,7 @@ func (c *Expected) CallWithGas(ctx context.Context, msg *types.UnsignedMessage, 
 	}
 	msg.Nonce = fromActor.Nonce
 
-	viewer := state2.NewView(c.cstore, stateRoot)
-	fromKey, err := viewer.ResolveToKeyAddr(ctx, msg.VMMessage().From)
+	fromKey, err := view.ResolveToKeyAddr(ctx, msg.VMMessage().From)
 	if err != nil {
 		return nil, xerrors.Errorf("could not resolve key: %v", err)
 	}
@@ -122,32 +117,32 @@ func (c *Expected) CallWithGas(ctx context.Context, msg *types.UnsignedMessage, 
 	return vmi.ApplyMessage(msgApply)
 }
 
-//Call used for api invoke to compute a msg base on specify tipset, if the tipset is null, use latest tipset in db
-func (c *Expected) Call(ctx context.Context, msg *types.UnsignedMessage, ts *types.TipSet) (*vm.Ret, error) {
+// Call used for api invoke to compute a msg base on specify tipset, if the tipset is null, use latest tipset in db
+func (c *Stmgr) Call(ctx context.Context, msg *types.UnsignedMessage, ts *types.TipSet) (*vm.Ret, error) {
 	ctx, span := trace.StartSpan(ctx, "statemanager.Call")
 	defer span.End()
-	chainReader := c.chainState
 
 	// If no tipset is provided, try to find one without a fork.
 	var err error
 	if ts == nil {
-		ts = chainReader.GetHead()
+		ts = c.cs.GetHead()
 
 		// Search back till we find a height with no fork, or we reach the beginning.
 		for ts.Height() > 0 && c.fork.HasExpensiveFork(ctx, ts.Height()-1) {
 			var err error
-			ts, err = chainReader.GetTipSet(ts.Parents())
+			ts, err = c.cs.GetTipSet(ts.Parents())
 			if err != nil {
 				return nil, xerrors.Errorf("failed to find a non-forking epoch: %v", err)
 			}
 		}
 	}
 
-	bstate := ts.At(0).ParentStateRoot
-	pts, err := c.chainState.GetTipSet(ts.Parents())
+	pts, err := c.cs.GetTipSet(ts.Parents())
 	if err != nil {
 		return nil, xerrors.Errorf("failed to load parent tipset: %v", err)
 	}
+
+	bstate := ts.At(0).ParentStateRoot
 	pheight := pts.Height()
 
 	// If we have to run an expensive migration, and we're not at genesis,
@@ -155,7 +150,7 @@ func (c *Expected) Call(ctx context.Context, msg *types.UnsignedMessage, ts *typ
 	//
 	// We allow this at height 0 for at-genesis migrations (for testing).
 	if pheight > 0 && c.fork.HasExpensiveFork(ctx, pheight) {
-		return nil, ErrExpensiveFork
+		return nil, consensus.ErrExpensiveFork
 	}
 
 	// Run the (not expensive) migration.
@@ -164,8 +159,8 @@ func (c *Expected) Call(ctx context.Context, msg *types.UnsignedMessage, ts *typ
 		return nil, fmt.Errorf("failed to handle fork: %v", err)
 	}
 
-	rnd := HeadRandomness{
-		Chain: c.rnd,
+	rnd := consensus.HeadRandomness{
+		Chain: c.cs,
 		Head:  ts.Key(),
 	}
 
@@ -185,7 +180,7 @@ func (c *Expected) Call(ctx context.Context, msg *types.UnsignedMessage, ts *typ
 		msg.Value = abi.NewTokenAmount(0)
 	}
 
-	st, err := tree.LoadState(ctx, cbor.NewCborStore(c.bstore), bstate)
+	st, err := tree.LoadState(ctx, cbor.NewCborStore(c.cs.Blockstore()), bstate)
 	if err != nil {
 		return nil, xerrors.Errorf("loading state: %v", err)
 	}
@@ -199,7 +194,7 @@ func (c *Expected) Call(ctx context.Context, msg *types.UnsignedMessage, ts *typ
 
 	vmOption := vm.VmOption{
 		CircSupplyCalculator: func(ctx context.Context, epoch abi.ChainEpoch, tree tree.Tree) (abi.TokenAmount, error) {
-			dertail, err := chainReader.GetCirculatingSupplyDetailed(ctx, epoch, tree)
+			dertail, err := c.cs.GetCirculatingSupplyDetailed(ctx, epoch, tree)
 			if err != nil {
 				return abi.TokenAmount{}, err
 			}
@@ -209,12 +204,16 @@ func (c *Expected) Call(ctx context.Context, msg *types.UnsignedMessage, ts *typ
 		Rnd:               &rnd,
 		BaseFee:           ts.At(0).ParentBaseFee,
 		Epoch:             pheight + 1,
-		GasPriceSchedule:  c.gasPirceSchedule,
+		GasPriceSchedule:  c.gasSchedule,
 		Fork:              c.fork,
 		PRoot:             ts.At(0).ParentStateRoot,
-		Bsstore:           c.bstore,
+		Bsstore:           c.cs.Blockstore(),
 		SysCallsImpl:      c.syscallsImpl,
 	}
 
-	return c.processor.ProcessImplicitMessage(ctx, msg, vmOption)
+	v, err := vm.NewVM(vmOption)
+	if err != nil {
+		return nil, err
+	}
+	return v.ApplyImplicitMessage(msg)
 }

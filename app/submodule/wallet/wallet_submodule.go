@@ -48,7 +48,7 @@ func NewWalletSubmodule(ctx context.Context,
 		return nil, errors.Wrap(err, "failed to set up walletModule backend")
 	}
 	fcWallet := wallet.New(backend)
-	headSigner := state.NewHeadSignView(chain.ChainReader)
+	headSigner := state.NewHeadSignView(chain.ChainStore)
 
 	var adapter wallet.WalletIntersection
 	if repo.Config().Wallet.RemoteEnable {

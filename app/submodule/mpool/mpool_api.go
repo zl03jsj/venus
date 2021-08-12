@@ -3,6 +3,7 @@ package mpool
 import (
 	"context"
 	"encoding/json"
+	"github.com/filecoin-project/go-state-types/abi"
 
 	"github.com/filecoin-project/venus/app/submodule/apitypes"
 
@@ -19,19 +20,19 @@ import (
 
 var _ apiface.IMessagePool = &MessagePoolAPI{}
 
-//MessagePoolAPI messsage pool api implement
+// MessagePoolAPI messsage pool api implement
 type MessagePoolAPI struct {
 	pushLocks *messagepool.MpoolLocker
 
 	mp *MessagePoolSubmodule
 }
 
-//MpoolDeleteByAdress delete msg in mpool of addr
+// MpoolDeleteByAdress delete msg in mpool of addr
 func (a *MessagePoolAPI) MpoolDeleteByAdress(ctx context.Context, addr address.Address) error {
 	return a.mp.MPool.DeleteByAdress(addr)
 }
 
-//MpoolPublish publish message of address
+// MpoolPublish publish message of address
 func (a *MessagePoolAPI) MpoolPublishByAddr(ctx context.Context, addr address.Address) error {
 	return a.mp.MPool.PublishMsgForWallet(ctx, addr)
 }
@@ -65,7 +66,7 @@ func (a *MessagePoolAPI) MpoolSelect(ctx context.Context, tsk types.TipSetKey, t
 	return a.mp.MPool.SelectMessages(ctx, ts, ticketQuality)
 }
 
-//MpoolSelects The batch selection message is used when multiple blocks need to select messages at the same time
+// MpoolSelects The batch selection message is used when multiple blocks need to select messages at the same time
 func (a *MessagePoolAPI) MpoolSelects(ctx context.Context, tsk types.TipSetKey, ticketQualitys []float64) ([][]*types.SignedMessage, error) {
 	ts, err := a.mp.chain.API().ChainGetTipSet(ctx, tsk)
 	if err != nil {
@@ -280,6 +281,13 @@ func (a *MessagePoolAPI) MpoolSub(ctx context.Context) (<-chan messagepool.Mpool
 
 // GasEstimateMessageGas estimates gas values for unset message gas fields
 func (a *MessagePoolAPI) GasEstimateMessageGas(ctx context.Context, msg *types.UnsignedMessage, spec *types.MessageSendSpec, tsk types.TipSetKey) (*types.UnsignedMessage, error) {
+	if spec == nil {
+		spec = &types.MessageSendSpec{MaxFee: abi.NewTokenAmount(0), GasOverEstimation: types.DefaultGasOverEstimation}
+	} else if spec.GasOverEstimation == 0 {
+		spec.GasOverEstimation = types.DefaultGasOverEstimation
+	} else if spec.GasOverEstimation < types.MinGasOverEsitimation {
+		return nil, xerrors.Errorf("GasOverEstimation must NOT less than '1.0'")
+	}
 	return a.mp.MPool.GasEstimateMessageGas(ctx, &types.EstimateMessage{Msg: msg, Spec: spec}, tsk)
 }
 
@@ -316,8 +324,8 @@ func (a *MessagePoolAPI) MpoolCheckReplaceMessages(ctx context.Context, msg []*t
 
 /*// WalletSign signs the given bytes using the given address.
 func (a *MessagePoolAPI) WalletSign(ctx context.Context, k address.Address, msg []byte) (*crypto.Signature, error) {
-	head := a.mp.chain.ChainReader.GetHead()
-	view, err := a.mp.chain.ChainReader.StateView(head)
+	head := a.mp.chain.ChainStore.GetHead()
+	view, err := a.mp.chain.ChainStore.StateView(head)
 	if err != nil {
 		return nil, err
 	}

@@ -3,8 +3,6 @@ package wallet
 import (
 	"context"
 	"errors"
-	"strings"
-
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-state-types/abi"
 	"golang.org/x/xerrors"
@@ -19,22 +17,23 @@ var _ apiface.IWallet = &WalletAPI{}
 
 var ErrNoDefaultFromAddress = errors.New("unable to determine a default walletModule address")
 
-type WalletAPI struct { //nolint
+type WalletAPI struct { // nolint
 	walletModule *WalletSubmodule
 	adapter      wallet.WalletIntersection
 }
 
 // WalletBalance returns the current balance of the given wallet address.
 func (walletAPI *WalletAPI) WalletBalance(ctx context.Context, addr address.Address) (abi.TokenAmount, error) {
-	headkey := walletAPI.walletModule.Chain.ChainReader.GetHead()
-	act, err := walletAPI.walletModule.Chain.ChainReader.GetActorAt(ctx, headkey, addr)
-	if err != nil && strings.Contains(err.Error(), types.ErrActorNotFound.Error()) {
-		return abi.NewTokenAmount(0), nil
-	} else if err != nil {
-		return abi.NewTokenAmount(0), err
+	actor, err := walletAPI.walletModule.Chain.Stmgr.GetActorAtTsk(ctx, addr, types.EmptyTSK)
+	if err != nil {
+		if xerrors.Is(err, types.ErrActorNotFound) {
+			return abi.NewTokenAmount(0), nil
+		} else {
+			return abi.NewTokenAmount(0), err
+		}
 	}
 
-	return act.Balance, nil
+	return actor.Balance, nil
 }
 
 // WalletHas indicates whether the given address is in the wallet.
@@ -105,8 +104,8 @@ func (walletAPI *WalletAPI) WalletExport(addr address.Address, password string) 
 
 // WalletSign signs the given bytes using the given address.
 func (walletAPI *WalletAPI) WalletSign(ctx context.Context, k address.Address, msg []byte, meta wallet.MsgMeta) (*crypto.Signature, error) {
-	head := walletAPI.walletModule.Chain.ChainReader.GetHead()
-	view, err := walletAPI.walletModule.Chain.ChainReader.StateView(head)
+	head := walletAPI.walletModule.Chain.ChainStore.GetHead()
+	view, err := walletAPI.walletModule.Chain.ChainStore.StateView(head)
 	if err != nil {
 		return nil, err
 	}
@@ -135,27 +134,27 @@ func (walletAPI *WalletAPI) WalletSignMessage(ctx context.Context, k address.Add
 	}, nil
 }
 
-//LockWallet lock wallet
+// LockWallet lock wallet
 func (walletAPI *WalletAPI) LockWallet(ctx context.Context) error {
 	return walletAPI.walletModule.Wallet.LockWallet()
 }
 
-//UnLockWallet unlock wallet
+// UnLockWallet unlock wallet
 func (walletAPI *WalletAPI) UnLockWallet(ctx context.Context, password []byte) error {
 	return walletAPI.walletModule.Wallet.UnLockWallet(password)
 }
 
-//SetPassword set wallet password
+// SetPassword set wallet password
 func (walletAPI *WalletAPI) SetPassword(Context context.Context, password []byte) error {
 	return walletAPI.walletModule.Wallet.SetPassword(password)
 }
 
-//HasPassword return whether the wallet has password
+// HasPassword return whether the wallet has password
 func (walletAPI *WalletAPI) HasPassword(Context context.Context) bool {
 	return walletAPI.adapter.HasPassword()
 }
 
-//WalletState return wallet state
+// WalletState return wallet state
 func (walletAPI *WalletAPI) WalletState(Context context.Context) int {
 	return walletAPI.walletModule.Wallet.WalletState()
 }

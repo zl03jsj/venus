@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/filecoin-project/venus/app/submodule/apiface"
 	"github.com/filecoin-project/venus/app/submodule/apitypes"
-	"github.com/filecoin-project/venus/pkg/consensus"
 	"github.com/filecoin-project/venus/pkg/repo"
 	"github.com/filecoin-project/venus/pkg/statemanger"
 	"github.com/filecoin-project/venus/pkg/types"
@@ -74,7 +73,6 @@ type Manager struct {
 type ManagerParams struct {
 	MPoolAPI  apiface.IMessagePool
 	ChainAPI  apiface.IChain
-	Protocol  consensus.Protocol
 	WalletAPI apiface.IWallet
 	DS        repo.Datastore
 	SM        statemanger.IStateManager

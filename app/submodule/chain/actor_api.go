@@ -15,19 +15,14 @@ type actorAPI struct {
 	chain *ChainSubmodule
 }
 
-//NewActorAPI new actor api
+// NewActorAPI new actor api
 func NewActorAPI(chain *ChainSubmodule) apiface.IActor {
 	return &actorAPI{chain: chain}
 }
 
 // StateGetActor returns the indicated actor's nonce and balance.
 func (actorAPI *actorAPI) StateGetActor(ctx context.Context, actor address.Address, tsk types.TipSetKey) (*types.Actor, error) {
-	ts, err := actorAPI.chain.ChainReader.GetTipSet(tsk)
-	if err != nil {
-		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
-	}
-
-	view, err := actorAPI.chain.ChainReader.ParentStateView(ts)
+	_, view, err := actorAPI.chain.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
 		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
 	}
@@ -36,5 +31,5 @@ func (actorAPI *actorAPI) StateGetActor(ctx context.Context, actor address.Addre
 
 // ActorLs returns a channel with actors from the latest state on the chain
 func (actorAPI *actorAPI) ListActor(ctx context.Context) (map[address.Address]*types.Actor, error) {
-	return actorAPI.chain.ChainReader.LsActors(ctx)
+	return actorAPI.chain.ChainStore.LsActors(ctx)
 }

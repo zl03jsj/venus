@@ -3,6 +3,10 @@ package syncer
 import (
 	"bytes"
 	"context"
+	"fmt"
+	chain2 "github.com/filecoin-project/venus/app/submodule/chain"
+	"github.com/filecoin-project/venus/pkg/clock"
+	"github.com/filecoin-project/venus/pkg/statemanger"
 	"reflect"
 	"runtime"
 	"time"
@@ -16,14 +20,12 @@ import (
 	"go.opencensus.io/trace"
 
 	"github.com/filecoin-project/venus/app/submodule/blockstore"
-	chain2 "github.com/filecoin-project/venus/app/submodule/chain"
 	"github.com/filecoin-project/venus/app/submodule/discovery"
 	"github.com/filecoin-project/venus/app/submodule/network"
 	"github.com/filecoin-project/venus/pkg/beacon"
 	"github.com/filecoin-project/venus/pkg/chain"
 	"github.com/filecoin-project/venus/pkg/chainsync"
 	"github.com/filecoin-project/venus/pkg/chainsync/slashfilter"
-	"github.com/filecoin-project/venus/pkg/clock"
 	"github.com/filecoin-project/venus/pkg/consensus"
 	"github.com/filecoin-project/venus/pkg/net/blocksub"
 	"github.com/filecoin-project/venus/pkg/net/pubsub"
@@ -36,7 +38,7 @@ import (
 var log = logging.Logger("sync.module") // nolint: deadcode
 
 // SyncerSubmodule enhances the node with chain syncing capabilities
-type SyncerSubmodule struct { //nolint
+type SyncerSubmodule struct { // nolint
 	BlockstoreModule   *blockstore.BlockstoreSubmodule
 	ChainModule        *chain2.ChainSubmodule
 	NetworkModule      *network.NetworkSubmodule
@@ -45,7 +47,7 @@ type SyncerSubmodule struct { //nolint
 	BlockTopic       *pubsub.Topic
 	BlockSub         pubsub.Subscription
 	ChainSelector    nodeChainSelector
-	Consensus        consensus.Protocol
+	// Consensus        consensus.Protocol
 	ChainSyncManager *chainsync.Manager
 	Drand            beacon.Schedule
 	SyncProvider     ChainSyncProvider
@@ -53,6 +55,7 @@ type SyncerSubmodule struct { //nolint
 	BlockValidator   *consensus.BlockValidator
 	// cancelChainSync cancels the context for chain sync subscriptions and handlers.
 	CancelChainSync context.CancelFunc
+	Stmgr           *statemanger.Stmgr
 }
 
 type syncerConfig interface {
@@ -78,15 +81,15 @@ func NewSyncerSubmodule(ctx context.Context,
 	// setup validation
 	gasPriceSchedule := gas.NewPricesSchedule(config.Repo().Config().NetworkParams.ForkUpgradeParam)
 
-	genBlk, err := chn.ChainReader.GetGenesisBlock(ctx)
+	genBlk, err := chn.ChainStore.GetGenesisBlock(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to locate genesis block during node build")
 	}
 
 	// set up consensus
 	//	elections := consensus.NewElectionMachine(chn.state)
-	sampler := chain.NewSampler(chn.ChainReader, genBlk.Ticket)
-	tickets := consensus.NewTicketMachine(sampler, chn.ChainReader)
+	sampler := chain.NewSampler(chn.ChainStore, genBlk.Ticket)
+	tickets := consensus.NewTicketMachine(sampler, chn.ChainStore)
 	stateViewer := consensus.AsDefaultStateViewer(state.NewViewer(blockstore.CborStore))
 	nodeChainSelector := consensus.NewChainSelector(blockstore.CborStore, &stateViewer)
 
@@ -97,12 +100,12 @@ func NewSyncerSubmodule(ctx context.Context,
 		blockstore.CborStore,
 		postVerifier,
 		&stateViewer,
-		chn.ChainReader,
+		chn.ChainStore,
 		nodeChainSelector,
 		chn.Fork,
 		config.Repo().Config().NetworkParams,
-		gasPriceSchedule,
-	)
+		gasPriceSchedule)
+
 	// register block validation on pubsub
 	btv := blocksub.NewBlockTopicValidator(blkValid)
 	if err := network.Pubsub.RegisterTopicValidator(btv.Topic(network.NetworkName), btv.Validator(), btv.Opts()...); err != nil {
@@ -112,8 +115,7 @@ func NewSyncerSubmodule(ctx context.Context,
 	nodeConsensus := consensus.NewExpected(blockstore.CborStore,
 		blockstore.Blockstore,
 		config.BlockTime(),
-		chn.ChainReader,
-		chn.ChainReader,
+		chn.ChainStore,
 		chn.MessageStore,
 		chn.Fork,
 		config.Repo().Config().NetworkParams,
@@ -122,7 +124,15 @@ func NewSyncerSubmodule(ctx context.Context,
 		chn.SystemCall,
 	)
 
-	chainSyncManager, err := chainsync.NewManager(nodeConsensus, blkValid, nodeChainSelector, chn.ChainReader, chn.MessageStore, blockstore.Blockstore, discovery.ExchangeClient, config.ChainClock(), chn.Fork)
+	stmgr := statemanger.NewStateManger(chn.ChainStore, nodeConsensus,
+		chn.Fork, gasPriceSchedule, chn.SystemCall)
+
+	blkValid.Stmgr = stmgr
+	chn.Stmgr = stmgr
+	chn.Waiter.Stmgr = stmgr
+
+	chainSyncManager, err := chainsync.NewManager(stmgr, blkValid, chn, nodeChainSelector,
+		blockstore.Blockstore, discovery.ExchangeClient, config.ChainClock(), chn.Fork)
 	if err != nil {
 		return nil, err
 	}
@@ -148,12 +158,13 @@ func NewSyncerSubmodule(ctx context.Context,
 	}
 
 	return &SyncerSubmodule{
+		Stmgr:              stmgr,
 		BlockstoreModule:   blockstore,
 		ChainModule:        chn,
 		NetworkModule:      network,
 		DiscoverySubmodule: discovery,
 		SlashFilter:        slashFilter,
-		Consensus:          nodeConsensus,
+		// Consensus:          stmgr,
 		ChainSelector:      nodeChainSelector,
 		ChainSyncManager:   &chainSyncManager,
 		Drand:              chn.Drand,
@@ -181,11 +192,17 @@ func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pu
 	header := bm.Header
 	span.AddAttributes(trace.StringAttribute("block", header.Cid().String()))
 	log.Infof("Received new block %s height %d from peer %s", header.Cid(), header.Height, sender)
-	_, err = syncer.ChainModule.ChainReader.PutObject(ctx, bm.Header)
+	_, err = syncer.ChainModule.ChainStore.PutObject(ctx, bm.Header)
 	if err != nil {
 		log.Errorf("failed to save block %s", err)
 	}
 	go func() {
+		start := time.Now()
+		fmt.Printf(`_sc|____incomming new block:%d________
+_sc| block_cid:%s
+_sc|
+`, header.Height, header.Cid().String(), header.Parents.String())
+
 		_, err = syncer.NetworkModule.FetchMessagesByCids(ctx, bm.BlsMessages)
 		if err != nil {
 			log.Errorf("failed to fetch all bls messages for block received over pubusb: %s; source: %s", err, source)
@@ -198,21 +215,33 @@ func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pu
 			return
 		}
 
+		if took := time.Since(start); took > 3*time.Second {
+			fmt.Printf("_sc| slow fetch block message: cid:%s\n_sc|\n", bm.Header.Cid().String())
+		}
+
+		if delay := uint64(time.Now().Unix()) - bm.Header.Timestamp; delay > 5 {
+			fmt.Printf("_sc| received block with large delay(%d(seconds)), cid:%s\n_sc|\n",
+				delay, bm.Header.Cid())
+		}
+
 		syncer.NetworkModule.Host.ConnManager().TagPeer(sender, "new-block", 20)
 		log.Infof("fetch message success at %s", bm.Header.Cid())
+
 		ts, _ := types.NewTipSet(header)
 		chainInfo := types.NewChainInfo(source, sender, ts)
-		err = syncer.ChainSyncManager.BlockProposer().SendGossipBlock(chainInfo)
-		if err != nil {
+
+		if err = syncer.ChainSyncManager.BlockProposer().SendGossipBlock(chainInfo); err != nil {
 			log.Errorf("failed to notify syncer of new block, block: %s", err)
 		}
+		fmt.Printf("_sc|_____imcomming new block(%d) cost time = %.4f(seconds)\n",
+			bm.Header.Height, time.Since(start).Seconds())
 	}()
 	return nil
 }
 
 // nolint
 func (syncer *SyncerSubmodule) loadLocalFullTipset(ctx context.Context, tsk types.TipSetKey) (*types.FullTipSet, error) {
-	ts, err := syncer.ChainModule.ChainReader.GetTipSet(tsk)
+	ts, err := syncer.ChainModule.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +278,7 @@ func (syncer *SyncerSubmodule) Start(ctx context.Context) error {
 		return errors.Wrapf(err, "failed to subscribe block topic")
 	}
 
-	//process incoming blocks
+	// process incoming blocks
 	go func() {
 		for {
 			received, err := syncer.BlockSub.Next(ctx)
@@ -286,7 +315,7 @@ func (syncer *SyncerSubmodule) Stop(ctx context.Context) {
 	}
 }
 
-//API create a new sync api implement
+// API create a new sync api implement
 func (syncer *SyncerSubmodule) API() apiface.ISyncer {
 	return &syncerAPI{syncer: syncer}
 }

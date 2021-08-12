@@ -3,13 +3,14 @@ package dispatcher
 import (
 	"container/list"
 	"context"
+	"fmt"
+	"github.com/filecoin-project/venus/pkg/chainsync/types"
 	types2 "github.com/filecoin-project/venus/pkg/types"
+	"github.com/streadway/handy/atomic"
 	"runtime/debug"
 	"sync"
+	atmoic2 "sync/atomic"
 	"time"
-
-	"github.com/filecoin-project/venus/pkg/chainsync/types"
-	"github.com/streadway/handy/atomic"
 
 	logging "github.com/ipfs/go-log/v2"
 )
@@ -118,7 +119,7 @@ func (d *Dispatcher) addTracker(ci *types2.ChainInfo) error {
 func (d *Dispatcher) Start(syncingCtx context.Context) {
 	go d.processIncoming(syncingCtx)
 
-	go d.syncWorker(syncingCtx)
+	go d.syncWorkerV2(syncingCtx)
 }
 
 func (d *Dispatcher) processIncoming(ctx context.Context) {
@@ -149,7 +150,7 @@ func (d *Dispatcher) processIncoming(ctx context.Context) {
 	}
 }
 
-//SetConcurrent set the max goroutine to syncing target
+// SetConcurrent set the max goroutine to syncing target
 func (d *Dispatcher) SetConcurrent(number int64) {
 	d.lk.Lock()
 	defer d.lk.Unlock()
@@ -167,22 +168,114 @@ func (d *Dispatcher) SetConcurrent(number int64) {
 	}
 }
 
-//Concurrent get current max syncing goroutine
+// Concurrent get current max syncing goroutine
 func (d *Dispatcher) Concurrent() int64 {
 	d.lk.Lock()
 	defer d.lk.Unlock()
 	return d.maxCount
 }
 
-//syncWorker  get sync target from work tracker periodically,
-//read all sync targets each time, and start synchronization
+func (d *Dispatcher) selectStableTarget(ch <-chan struct{}) (*types.Target, bool) {
+	target, popped := d.workTracker.Select()
+	if !popped {
+		return nil, false
+	}
+
+	const maxWaitCount = 2
+	var stabled = false
+	var duration = time.Millisecond * 150
+
+	time.Sleep(duration)
+
+	for i := 0; i <= maxWaitCount && !stabled; {
+		select {
+		// we are purpose to clear chan buffer
+		case _, isok := <-ch:
+			if !isok {
+				return target, popped
+			}
+			if nextTarget, p := d.workTracker.Select(); p {
+				if stabled := target.Head.Key().Equals(nextTarget.Head.Key()); !stabled {
+					target = nextTarget
+				}
+			} else {
+				return nil, false
+			}
+		default:
+			time.Sleep(duration)
+			stabled = true
+			i++
+		}
+	}
+	return target, popped
+}
+
+func (d *Dispatcher) syncWorkerV2(ctx context.Context) {
+	const chKey = "sync-worker"
+	ch := d.workTracker.SubNewTarget(chKey, 10)
+	var unsolvedNotify = int64(0)
+	for {
+		select {
+		// must make sure, 'ch' is not blocked, or may cause syncing problems
+		case _, isok := <-ch:
+			if !isok {
+				break
+			}
+
+			if syncTarget, popped := d.selectStableTarget(ch); popped {
+				fmt.Printf(`
+_sc|__________new sync target, height=%d_______
+_sc|blocks=%s
+_sc|
+`, syncTarget.Head.Height(), syncTarget.Head.Key().String())
+
+				// Do work
+				d.lk.Lock()
+				if d.conCurrent.Get() < d.maxCount {
+					atmoic2.StoreInt64(&unsolvedNotify, 0)
+					syncTarget.State = types.StateInSyncing
+					ctx, cancel := context.WithCancel(ctx)
+					d.cancelControler.PushBack(cancel)
+					d.conCurrent.Add(1)
+					go func() {
+						err := d.syncer.HandleNewTipSet(ctx, syncTarget)
+						d.workTracker.Remove(syncTarget)
+						if err != nil {
+							log.Infof("failed sync of %v at %d  %s", syncTarget.Head.Key(), syncTarget.Head.Height(), err)
+						}
+						d.registeredCb(syncTarget, err)
+						d.conCurrent.Add(-1)
+
+						// been notified after last time execute 'handleNewTipset',
+						// but because of 'conCurrent' reached 'maxCount',
+						// the notify was ignored,
+						// that means there are new 'syncTarget' is waiting for solving.
+						if atmoic2.LoadInt64(&unsolvedNotify) > 0 {
+							ch <- struct{}{}
+						}
+					}()
+				} else {
+					atmoic2.StoreInt64(&unsolvedNotify, 1)
+				}
+				d.lk.Unlock()
+			}
+		case <-ctx.Done():
+			d.workTracker.UnsubNewTarget(chKey)
+			log.Info("context done")
+			return
+		}
+	}
+}
+
+// syncWorkerV2  get sync target from work tracker periodically,
+// read all sync targets each time, and start synchronization
 func (d *Dispatcher) syncWorker(ctx context.Context) {
 	ticker := time.NewTicker(time.Millisecond * 500)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			for { //avoid to sleep a ticker， loop to get each target to run
+			for { // avoid to sleep a ticker， loop to get each target to run
 				syncTarget, popped := d.workTracker.Select()
 				if popped {
 					// Do work

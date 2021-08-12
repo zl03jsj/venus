@@ -33,7 +33,6 @@ import (
 	"github.com/filecoin-project/venus/pkg/paychmgr"
 	"github.com/filecoin-project/venus/pkg/repo"
 	"github.com/filecoin-project/venus/pkg/specactors/policy"
-	"github.com/filecoin-project/venus/pkg/statemanger"
 	"github.com/filecoin-project/venus/pkg/util/ffiwrapper"
 	"github.com/ipfs/go-cid"
 	"github.com/libp2p/go-libp2p"
@@ -253,7 +252,7 @@ func (b *Builder) build(ctx context.Context) (*Node, error) {
 
 	if b.chainClock == nil {
 		// get the genesis block time from the chainsubmodule
-		geneBlk, err := nd.chain.ChainReader.GetGenesisBlock(ctx)
+		geneBlk, err := nd.chain.ChainStore.GetGenesisBlock(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -263,7 +262,7 @@ func (b *Builder) build(ctx context.Context) (*Node, error) {
 	nd.chainClock = b.chainClock
 
 	// todo change builder interface to read config
-	nd.discovery, err = discovery.NewDiscoverySubmodule(ctx, (*builder)(b), b.repo.Config(), nd.network, nd.chain.ChainReader, nd.chain.MessageStore)
+	nd.discovery, err = discovery.NewDiscoverySubmodule(ctx, (*builder)(b), b.repo.Config(), nd.network, nd.chain.ChainStore, nd.chain.MessageStore)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build node.discovery")
 	}
@@ -278,7 +277,7 @@ func (b *Builder) build(ctx context.Context) (*Node, error) {
 		return nil, errors.Wrap(err, "failed to build node.wallet")
 	}
 
-	nd.mpool, err = mpool.NewMpoolSubmodule((*builder)(b), nd.network, nd.chain, nd.syncer, nd.wallet, b.repo.Config().NetworkParams)
+	nd.mpool, err = mpool.NewMpoolSubmodule((*builder)(b), nd.network, nd.chain, nd.wallet, b.repo.Config().NetworkParams)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build node.mpool")
 	}
@@ -287,21 +286,20 @@ func (b *Builder) build(ctx context.Context) (*Node, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build node.storageNetworking")
 	}
-	nd.mining = mining.NewMiningModule(b.repo, nd.chain, nd.blockstore, nd.network, nd.syncer, *nd.wallet, b.verifier)
 
-	nd.multiSig = multisig.NewMultiSigSubmodule(nd.chain.API(), nd.mpool.API(), nd.chain.ChainReader)
+	nd.mining = mining.NewMiningModule(nd.syncer.Stmgr, b.repo, nd.chain, nd.blockstore, nd.network, nd.syncer, *nd.wallet, b.verifier)
 
-	stmgr := statemanger.NewStateMangerAPI(nd.chain.ChainReader, nd.syncer.Consensus)
+	nd.multiSig = multisig.NewMultiSigSubmodule(nd.chain.API(), nd.mpool.API(), nd.chain.ChainStore)
+
 	mgrps := &paychmgr.ManagerParams{
 		MPoolAPI:  nd.mpool.API(),
 		ChainAPI:  nd.chain.API(),
-		Protocol:  nd.syncer.Consensus,
-		SM:        stmgr,
+		SM:        nd.syncer.Stmgr,
 		DS:        b.repo.PaychDatastore(),
 		WalletAPI: nd.wallet.API(),
 	}
 	nd.paychan = paych.NewPaychSubmodule(ctx, mgrps)
-	nd.market = market.NewMarketModule(nd.chain.API(), stmgr)
+	nd.market = market.NewMarketModule(nd.chain.API(), nd.syncer.Stmgr)
 
 	apiBuilder := NewBuilder()
 	apiBuilder.NameSpace("Filecoin")

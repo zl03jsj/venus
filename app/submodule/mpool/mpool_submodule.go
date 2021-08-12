@@ -19,7 +19,6 @@ import (
 	"github.com/filecoin-project/venus/app/submodule/apiface"
 	"github.com/filecoin-project/venus/app/submodule/chain"
 	"github.com/filecoin-project/venus/app/submodule/network"
-	"github.com/filecoin-project/venus/app/submodule/syncer"
 	"github.com/filecoin-project/venus/app/submodule/wallet"
 	chainpkg "github.com/filecoin-project/venus/pkg/chain"
 	"github.com/filecoin-project/venus/pkg/config"
@@ -78,18 +77,18 @@ func OpenFilesystemJournal(lr repo.Repo) (journal.Journal, error) {
 func NewMpoolSubmodule(cfg messagepoolConfig,
 	network *network.NetworkSubmodule,
 	chain *chain.ChainSubmodule,
-	syncer *syncer.SyncerSubmodule,
 	wallet *wallet.WalletSubmodule,
 	networkCfg *config.NetworkParamsConfig,
 ) (*MessagePoolSubmodule, error) {
-	mpp := messagepool.NewProvider(chain.ChainReader, chain.MessageStore, cfg.Repo().Config().NetworkParams, network.Pubsub)
+	mpp := messagepool.NewProvider(chain.Stmgr, chain.ChainStore, chain.MessageStore, cfg.Repo().Config().NetworkParams, network.Pubsub)
 
 	j, err := OpenFilesystemJournal(cfg.Repo())
 	if err != nil {
 		return nil, err
 	}
-	mp, err := messagepool.New(mpp, cfg.Repo().MetaDatastore(), cfg.Repo().Config().NetworkParams.ForkUpgradeParam, cfg.Repo().Config().Mpool,
-		network.NetworkName, syncer.Consensus, chain.ChainReader, j)
+	mp, err := messagepool.New(mpp, chain.Stmgr, cfg.Repo().MetaDatastore(),
+		cfg.Repo().Config().NetworkParams.ForkUpgradeParam, cfg.Repo().Config().Mpool,
+		network.NetworkName, j)
 	if err != nil {
 		return nil, xerrors.Errorf("constructing mpool: %s", err)
 	}
@@ -97,7 +96,7 @@ func NewMpoolSubmodule(cfg messagepoolConfig,
 	// setup messaging topic.
 	// register block validation on pubsub
 	msgSyntaxValidator := consensus.NewMessageSyntaxValidator()
-	msgSignatureValidator := consensus.NewMessageSignatureValidator(chain.ChainReader)
+	msgSignatureValidator := consensus.NewMessageSignatureValidator(chain.ChainStore)
 
 	mtv := msgsub.NewMessageTopicValidator(msgSyntaxValidator, msgSignatureValidator)
 	if err := network.Pubsub.RegisterTopicValidator(mtv.Topic(network.NetworkName), mtv.Validator(), mtv.Opts()...); err != nil {
@@ -219,7 +218,7 @@ func (mp *MessagePoolSubmodule) waitForSync(epochs int, subscribe func()) {
 	nearsync := time.Duration(epochs*int(mp.networkCfg.BlockDelay)) * time.Second
 
 	// early check, are we synced at start up?
-	ts := mp.chain.ChainReader.GetHead()
+	ts := mp.chain.ChainStore.GetHead()
 	timestamp := ts.MinTimestamp()
 	timestampTime := time.Unix(int64(timestamp), 0)
 	if constants.Clock.Since(timestampTime) < nearsync {
@@ -228,7 +227,7 @@ func (mp *MessagePoolSubmodule) waitForSync(epochs int, subscribe func()) {
 	}
 
 	// we are not synced, subscribe to head changes and wait for sync
-	mp.chain.ChainReader.SubscribeHeadChanges(func(rev, app []*types.TipSet) error {
+	mp.chain.ChainStore.SubscribeHeadChanges(func(rev, app []*types.TipSet) error {
 		if len(app) == 0 {
 			return nil
 		}

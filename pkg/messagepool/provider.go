@@ -2,6 +2,7 @@ package messagepool
 
 import (
 	"context"
+	"github.com/filecoin-project/venus/pkg/statemanger"
 	"time"
 
 	"github.com/filecoin-project/go-address"
@@ -14,7 +15,6 @@ import (
 	"github.com/filecoin-project/venus/pkg/config"
 	"github.com/filecoin-project/venus/pkg/messagesigner"
 	"github.com/filecoin-project/venus/pkg/specactors/policy"
-	"github.com/filecoin-project/venus/pkg/state"
 	"github.com/filecoin-project/venus/pkg/types"
 )
 
@@ -41,7 +41,8 @@ type Provider interface {
 }
 
 type mpoolProvider struct {
-	sm     *chain.Store
+	sm     *statemanger.Stmgr
+	cs     *chain.Store
 	cms    *chain.MessageStore
 	config *config.NetworkParamsConfig
 	ps     *pubsub.PubSub
@@ -51,9 +52,10 @@ type mpoolProvider struct {
 
 var _ Provider = (*mpoolProvider)(nil)
 
-func NewProvider(sm *chain.Store, cms *chain.MessageStore, cfg *config.NetworkParamsConfig, ps *pubsub.PubSub) Provider {
+func NewProvider(sm *statemanger.Stmgr, cs *chain.Store, cms *chain.MessageStore, cfg *config.NetworkParamsConfig, ps *pubsub.PubSub) Provider {
 	return &mpoolProvider{
 		sm:     sm,
+		cs:     cs,
 		cms:    cms,
 		config: cfg,
 		ps:     ps,
@@ -61,7 +63,7 @@ func NewProvider(sm *chain.Store, cms *chain.MessageStore, cfg *config.NetworkPa
 }
 
 func NewProviderLite(sm *chain.Store, ps *pubsub.PubSub, noncer messagesigner.MpoolNonceAPI) Provider {
-	return &mpoolProvider{sm: sm, ps: ps, lite: noncer}
+	return &mpoolProvider{cs: sm, ps: ps, lite: noncer}
 }
 
 func (mpp *mpoolProvider) IsLite() bool {
@@ -69,30 +71,30 @@ func (mpp *mpoolProvider) IsLite() bool {
 }
 
 func (mpp *mpoolProvider) SubscribeHeadChanges(cb func(rev, app []*types.TipSet) error) *types.TipSet {
-	mpp.sm.SubscribeHeadChanges(
+	mpp.cs.SubscribeHeadChanges(
 		chain.WrapHeadChangeCoalescer(
 			cb,
 			HeadChangeCoalesceMinDelay,
 			HeadChangeCoalesceMaxDelay,
 			HeadChangeCoalesceMergeInterval,
 		))
-	return mpp.sm.GetHead()
+	return mpp.cs.GetHead()
 }
 
 func (mpp *mpoolProvider) ChainHead() (*types.TipSet, error) {
-	return mpp.sm.GetHead(), nil
+	return mpp.cs.GetHead(), nil
 }
 
 func (mpp *mpoolProvider) ChainTipSet(key types.TipSetKey) (*types.TipSet, error) {
-	return mpp.sm.GetTipSet(key)
+	return mpp.cs.GetTipSet(key)
 }
 
 func (mpp *mpoolProvider) PutMessage(m types.ChainMsg) (cid.Cid, error) {
-	return mpp.sm.PutMessage(m)
+	return mpp.cs.PutMessage(m)
 }
 
 func (mpp *mpoolProvider) PubSubPublish(k string, v []byte) error {
-	return mpp.ps.Publish(k, v) //nolint
+	return mpp.ps.Publish(k, v) // nolint
 }
 
 func (mpp *mpoolProvider) GetActorAfter(addr address.Address, ts *types.TipSet) (*types.Actor, error) {
@@ -109,7 +111,7 @@ func (mpp *mpoolProvider) GetActorAfter(addr address.Address, ts *types.TipSet) 
 		return a, nil
 	}
 
-	st, err := mpp.sm.GetTipSetState(context.TODO(), ts)
+	st, err := mpp.cs.GetTipSetState(context.TODO(), ts)
 	if err != nil {
 		return nil, xerrors.Errorf("computing tipset state for GetActor: %v", err)
 	}
@@ -125,33 +127,16 @@ func (mpp *mpoolProvider) GetActorAfter(addr address.Address, ts *types.TipSet) 
 func (mpp *mpoolProvider) StateAccountKeyAtFinality(ctx context.Context, addr address.Address, ts *types.TipSet) (address.Address, error) {
 	var err error
 	if ts.Height() > policy.ChainFinality {
-		ts, err = mpp.sm.GetTipSetByHeight(ctx, ts, ts.Height()-policy.ChainFinality, true)
+		ts, err = mpp.cs.GetTipSetByHeight(ctx, ts, ts.Height()-policy.ChainFinality, true)
 		if err != nil {
 			return address.Undef, xerrors.Errorf("failed to load lookback tipset: %w", err)
 		}
 	}
-
-	root, err := mpp.sm.GetTipSetStateRoot(ts)
-	if err != nil {
-		return address.Undef, xerrors.Errorf("failed to get state root for %s", ts.Key().String())
-	}
-
-	store := mpp.sm.ReadOnlyStateStore()
-	viewer := state.NewView(&store, root)
-
-	return viewer.ResolveToKeyAddr(ctx, addr)
+	return mpp.sm.ResolveToKeyAddress(ctx, addr, ts)
 }
 
 func (mpp *mpoolProvider) StateAccountKey(ctx context.Context, addr address.Address, ts *types.TipSet) (address.Address, error) {
-	root, err := mpp.sm.GetTipSetStateRoot(ts)
-	if err != nil {
-		return address.Undef, xerrors.Errorf("failed to get state root for %s", ts.Key().String())
-	}
-
-	store := mpp.sm.ReadOnlyStateStore()
-	viewer := state.NewView(&store, root)
-
-	return viewer.ResolveToKeyAddr(ctx, addr)
+	return mpp.sm.ResolveToKeyAddress(ctx, addr, ts)
 }
 
 func (mpp *mpoolProvider) MessagesForBlock(h *types.BlockHeader) ([]*types.UnsignedMessage, []*types.SignedMessage, error) {
@@ -164,7 +149,7 @@ func (mpp *mpoolProvider) MessagesForTipset(ts *types.TipSet) ([]types.ChainMsg,
 }
 
 func (mpp *mpoolProvider) LoadTipSet(tsk types.TipSetKey) (*types.TipSet, error) {
-	return mpp.sm.GetTipSet(tsk)
+	return mpp.cs.GetTipSet(tsk)
 }
 
 func (mpp *mpoolProvider) ChainComputeBaseFee(ctx context.Context, ts *types.TipSet) (tbig.Int, error) {

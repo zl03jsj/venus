@@ -2,7 +2,6 @@ package chain
 
 import (
 	"context"
-
 	"github.com/filecoin-project/go-address"
 	"github.com/filecoin-project/go-bitfield"
 	"github.com/filecoin-project/go-state-types/abi"
@@ -29,23 +28,17 @@ type minerStateAPI struct {
 	*ChainSubmodule
 }
 
-//NewMinerStateAPI create miner state api
+// NewMinerStateAPI create miner state api
 func NewMinerStateAPI(chain *ChainSubmodule) apiface.IMinerState {
 	return &minerStateAPI{ChainSubmodule: chain}
 }
 
 // StateMinerSectorAllocated checks if a sector is allocated
 func (msa *minerStateAPI) StateMinerSectorAllocated(ctx context.Context, maddr address.Address, s abi.SectorNumber, tsk types.TipSetKey) (bool, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return false, xerrors.Errorf("failed to get tipset %v", err)
+		return false, xerrors.Errorf("load Stmgr.ParentStateViewTsk(%s): %w", tsk, err)
 	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return false, xerrors.Errorf("loading tipset %s: %v", tsk, err)
-	}
-
 	mas, err := view.LoadMinerState(ctx, maddr)
 	if err != nil {
 		return false, xerrors.Errorf("failed to load miner actor state: %v", err)
@@ -55,13 +48,9 @@ func (msa *minerStateAPI) StateMinerSectorAllocated(ctx context.Context, maddr a
 
 // StateSectorPreCommitInfo returns the PreCommit info for the specified miner's sector
 func (msa *minerStateAPI) StateSectorPreCommitInfo(ctx context.Context, maddr address.Address, n abi.SectorNumber, tsk types.TipSetKey) (miner.SectorPreCommitOnChainInfo, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return miner.SectorPreCommitOnChainInfo{}, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return miner.SectorPreCommitOnChainInfo{}, xerrors.Errorf("loading tipset %s: %v", tsk, err)
+		return miner.SectorPreCommitOnChainInfo{}, xerrors.Errorf("loading tipset:%s parent state view: %v", tsk, err)
 	}
 
 	pci, err := view.SectorPreCommitInfo(ctx, maddr, n)
@@ -77,11 +66,7 @@ func (msa *minerStateAPI) StateSectorPreCommitInfo(ctx context.Context, maddr ad
 // NOTE: returned info.Expiration may not be accurate in some cases, use StateSectorExpiration to get accurate
 // expiration epoch
 func (msa *minerStateAPI) StateSectorGetInfo(ctx context.Context, maddr address.Address, n abi.SectorNumber, tsk types.TipSetKey) (*miner.SectorOnChainInfo, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
-	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
 		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
 	}
@@ -91,13 +76,9 @@ func (msa *minerStateAPI) StateSectorGetInfo(ctx context.Context, maddr address.
 
 // StateSectorPartition finds deadline/partition with the specified sector
 func (msa *minerStateAPI) StateSectorPartition(ctx context.Context, maddr address.Address, sectorNumber abi.SectorNumber, tsk types.TipSetKey) (*miner.SectorLocation, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
+		return nil, xerrors.Errorf("loadParentStateViewTsk(%s) failed:%w", tsk.String())
 	}
 
 	return view.StateSectorPartition(ctx, maddr, sectorNumber)
@@ -115,12 +96,7 @@ func (msa *minerStateAPI) StateMinerSectorSize(ctx context.Context, maddr addres
 
 // StateMinerInfo returns info about the indicated miner
 func (msa *minerStateAPI) StateMinerInfo(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (miner.MinerInfo, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
-	if err != nil {
-		return miner.MinerInfo{}, xerrors.Errorf("loading tipset %s: %v", tsk, err)
-	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
+	ts, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
 		return miner.MinerInfo{}, xerrors.Errorf("loading view %s: %v", tsk, err)
 	}
@@ -145,11 +121,7 @@ func (msa *minerStateAPI) StateMinerWorkerAddress(ctx context.Context, maddr add
 
 // StateMinerRecoveries returns a bitfield indicating the recovering sectors of the given miner
 func (msa *minerStateAPI) StateMinerRecoveries(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (bitfield.BitField, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
-	if err != nil {
-		return bitfield.BitField{}, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
 		return bitfield.BitField{}, xerrors.Errorf("loading view %s: %v", tsk, err)
 	}
@@ -164,13 +136,9 @@ func (msa *minerStateAPI) StateMinerRecoveries(ctx context.Context, maddr addres
 
 // StateMinerFaults returns a bitfield indicating the faulty sectors of the given miner
 func (msa *minerStateAPI) StateMinerFaults(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (bitfield.BitField, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return bitfield.BitField{}, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return bitfield.BitField{}, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return bitfield.BitField{}, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
 
 	mas, err := view.LoadMinerState(ctx, maddr)
@@ -184,14 +152,13 @@ func (msa *minerStateAPI) StateMinerFaults(ctx context.Context, maddr address.Ad
 // StateMinerProvingDeadline calculates the deadline at some epoch for a proving period
 // and returns the deadline-related calculations.
 func (msa *minerStateAPI) StateMinerProvingDeadline(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (*dline.Info, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
+		return nil, err
 	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
+	_, view, err := msa.Stmgr.ParentStateView(ctx, ts)
 	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
 
 	mas, err := view.LoadMinerState(ctx, maddr)
@@ -208,13 +175,9 @@ func (msa *minerStateAPI) StateMinerProvingDeadline(ctx context.Context, maddr a
 
 // StateMinerPartitions returns all partitions in the specified deadline
 func (msa *minerStateAPI) StateMinerPartitions(ctx context.Context, maddr address.Address, dlIdx uint64, tsk types.TipSetKey) ([]apitypes.Partition, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w")
 	}
 
 	mas, err := view.LoadMinerState(ctx, maddr)
@@ -269,13 +232,9 @@ func (msa *minerStateAPI) StateMinerPartitions(ctx context.Context, maddr addres
 
 // StateMinerDeadlines returns all the proving deadlines for the given miner
 func (msa *minerStateAPI) StateMinerDeadlines(ctx context.Context, maddr address.Address, tsk types.TipSetKey) ([]apitypes.Deadline, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w")
 	}
 
 	mas, err := view.LoadMinerState(ctx, maddr)
@@ -313,13 +272,9 @@ func (msa *minerStateAPI) StateMinerDeadlines(ctx context.Context, maddr address
 
 // StateMinerSectors returns info about the given miner's sectors. If the filter bitfield is nil, all sectors are included.
 func (msa *minerStateAPI) StateMinerSectors(ctx context.Context, maddr address.Address, sectorNos *bitfield.BitField, tsk types.TipSetKey) ([]*miner.SectorOnChainInfo, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w")
 	}
 
 	mas, err := view.LoadMinerState(ctx, maddr)
@@ -332,13 +287,9 @@ func (msa *minerStateAPI) StateMinerSectors(ctx context.Context, maddr address.A
 
 // StateMarketStorageDeal returns information about the indicated deal
 func (msa *minerStateAPI) StateMarketStorageDeal(ctx context.Context, dealID abi.DealID, tsk types.TipSetKey) (*apitypes.MarketDeal, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w")
 	}
 
 	mas, err := view.LoadMarketState(ctx)
@@ -384,10 +335,14 @@ var initialPledgeDen = big.NewInt(100)
 
 // StateMinerInitialPledgeCollateral returns the precommit deposit for the specified miner's sector
 func (msa *minerStateAPI) StateMinerPreCommitDepositForPower(ctx context.Context, maddr address.Address, pci miner.SectorPreCommitInfo, tsk types.TipSetKey) (big.Int, error) {
-	store := msa.ChainReader.Store(ctx)
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	store := msa.ChainStore.Store(ctx)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return big.Int{}, err
+	}
+
+	if _, _, err = msa.Stmgr.RunStateTransition(ctx, ts); err != nil {
+		return big.Int{}, xerrors.Errorf("runstateTransition failed:%w", err)
 	}
 
 	sTree, err := tree.LoadState(ctx, store, ts.At(0).ParentStateRoot)
@@ -445,15 +400,14 @@ func (msa *minerStateAPI) StateMinerPreCommitDepositForPower(ctx context.Context
 // StateMinerInitialPledgeCollateral returns the initial pledge collateral for the specified miner's sector
 func (msa *minerStateAPI) StateMinerInitialPledgeCollateral(ctx context.Context, maddr address.Address, pci miner.SectorPreCommitInfo, tsk types.TipSetKey) (big.Int, error) {
 	// TODO: this repeats a lot of the previous function. Fix that.
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return big.Int{}, xerrors.Errorf("loading tipset %s: %v", tsk, err)
 	}
 
-	store := msa.ChainReader.Store(ctx)
-	state, err := tree.LoadState(ctx, store, ts.At(0).ParentStateRoot)
+	_, state, err := msa.Stmgr.ParentState(ctx, ts)
 	if err != nil {
-		return big.Int{}, xerrors.Errorf("loading state %s: %v", tsk, err)
+		return big.Int{}, xerrors.Errorf("loading tipset(%s) parent state failed: %v", tsk, err)
 	}
 
 	ssize, err := pci.SealProof.SectorSize()
@@ -461,6 +415,7 @@ func (msa *minerStateAPI) StateMinerInitialPledgeCollateral(ctx context.Context,
 		return big.Int{}, xerrors.Errorf("failed to get resolve size: %v", err)
 	}
 
+	store := msa.ChainStore.Store(ctx)
 	var sectorWeight abi.StoragePower
 	if act, found, err := state.GetActor(ctx, market.Address); err != nil || !found {
 		return big.Int{}, xerrors.Errorf("loading miner actor %s: %v", maddr, err)
@@ -522,83 +477,76 @@ func (msa *minerStateAPI) StateMinerInitialPledgeCollateral(ctx context.Context,
 // StateVMCirculatingSupplyInternal returns an approximation of the circulating supply of Filecoin at the given tipset.
 // This is the value reported by the runtime interface to actors code.
 func (msa *minerStateAPI) StateVMCirculatingSupplyInternal(ctx context.Context, tsk types.TipSetKey) (chain.CirculatingSupply, error) {
-	store := msa.ChainReader.Store(ctx)
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return chain.CirculatingSupply{}, err
 	}
 
-	root, err := msa.ChainReader.GetTipSetStateRoot(ts)
+	_, sTree, err := msa.Stmgr.ParentState(ctx, ts)
 	if err != nil {
 		return chain.CirculatingSupply{}, err
 	}
 
-	sTree, err := tree.LoadState(ctx, store, root)
-	if err != nil {
-		return chain.CirculatingSupply{}, err
-	}
-
-	return msa.ChainReader.GetCirculatingSupplyDetailed(ctx, ts.Height(), sTree)
+	return msa.ChainStore.GetCirculatingSupplyDetailed(ctx, ts.Height(), sTree)
 }
 
 // StateCirculatingSupply returns the exact circulating supply of Filecoin at the given tipset.
 // This is not used anywhere in the protocol itself, and is only for external consumption.
 func (msa *minerStateAPI) StateCirculatingSupply(ctx context.Context, tsk types.TipSetKey) (abi.TokenAmount, error) {
-	return msa.ChainReader.StateCirculatingSupply(ctx, tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
+	if err != nil {
+		return abi.TokenAmount{}, err
+	}
+	if _, _, err = msa.Stmgr.ParentState(ctx, ts); err != nil {
+		return abi.TokenAmount{}, xerrors.Errorf("tipset(%s) parent state failed:%w",
+			ts.Key().String(), err)
+	}
+
+	return msa.ChainStore.StateCirculatingSupply(ctx, ts.Parents())
 }
 
 // StateMarketDeals returns information about every deal in the Storage Market
 func (msa *minerStateAPI) StateMarketDeals(ctx context.Context, tsk types.TipSetKey) (map[string]pstate.MarketDeal, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
-	}
-
 	return view.StateMarketDeals(ctx, tsk)
 }
 
 // StateMinerActiveSectors returns info about sectors that a given miner is actively proving.
 func (msa *minerStateAPI) StateMinerActiveSectors(ctx context.Context, maddr address.Address, tsk types.TipSetKey) ([]*miner.SectorOnChainInfo, error) { // TODO: only used in cli
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
-	}
-
 	return view.StateMinerActiveSectors(ctx, maddr, tsk)
 }
 
 // StateLookupID retrieves the ID address of the given address
 func (msa *minerStateAPI) StateLookupID(ctx context.Context, addr address.Address, tsk types.TipSetKey) (address.Address, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return address.Undef, xerrors.Errorf("failed to get tipset %v", err)
 	}
 
-	state, err := msa.ChainReader.GetTipSetState(ctx, ts)
+	if _, _, err := msa.Stmgr.RunStateTransition(ctx, ts); err != nil {
+		return address.Undef, xerrors.Errorf("runStateTransition failed:%w", err)
+	}
+
+	tsState, err := msa.ChainStore.GetTipSetState(ctx, ts)
 	if err != nil {
 		return address.Undef, xerrors.Errorf("load state tree: %v", err)
 	}
 
-	return state.LookupID(addr)
+	return tsState.LookupID(addr)
 }
 
 // StateListMiners returns the addresses of every miner that has claimed power in the Power Actor
 func (msa *minerStateAPI) StateListMiners(ctx context.Context, tsk types.TipSetKey) ([]address.Address, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
 
 	return view.StateListMiners(ctx, tsk)
@@ -606,11 +554,16 @@ func (msa *minerStateAPI) StateListMiners(ctx context.Context, tsk types.TipSetK
 
 // StateListActors returns the addresses of every actor in the state
 func (msa *minerStateAPI) StateListActors(ctx context.Context, tsk types.TipSetKey) ([]address.Address, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return nil, xerrors.Errorf("failed to get tipset %v", err)
 	}
-	st, err := msa.ChainReader.GetTipSetState(ctx, ts)
+
+	if _, _, err := msa.Stmgr.RunStateTransition(ctx, ts); err != nil {
+		return nil, xerrors.Errorf("runStateTransition failed:%w", err)
+	}
+
+	st, err := msa.ChainStore.GetTipSetState(ctx, ts)
 	if err != nil {
 		return nil, xerrors.Errorf("loading state: %v", err)
 	}
@@ -629,16 +582,10 @@ func (msa *minerStateAPI) StateListActors(ctx context.Context, tsk types.TipSetK
 
 // StateMinerPower returns the power of the indicated miner
 func (msa *minerStateAPI) StateMinerPower(ctx context.Context, addr address.Address, tsk types.TipSetKey) (*apitypes.MinerPower, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
-	}
-
 	mp, net, hmp, err := view.StateMinerPower(ctx, addr, tsk)
 	if err != nil {
 		return nil, err
@@ -653,14 +600,9 @@ func (msa *minerStateAPI) StateMinerPower(ctx context.Context, addr address.Addr
 
 // StateMinerAvailableBalance returns the portion of a miner's balance that can be withdrawn or spent
 func (msa *minerStateAPI) StateMinerAvailableBalance(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (big.Int, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	ts, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return big.Int{}, xerrors.Wrapf(err, "failed to get tipset for %s", tsk.String())
-	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return big.Int{}, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return big.Int{}, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
 
 	return view.StateMinerAvailableBalance(ctx, maddr, ts)
@@ -668,14 +610,9 @@ func (msa *minerStateAPI) StateMinerAvailableBalance(ctx context.Context, maddr 
 
 // StateSectorExpiration returns epoch at which given sector will expire
 func (msa *minerStateAPI) StateSectorExpiration(ctx context.Context, maddr address.Address, sectorNumber abi.SectorNumber, tsk types.TipSetKey) (*miner.SectorExpiration, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return nil, xerrors.Errorf("failed to get tipset %v", err)
-	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return nil, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
 
 	return view.StateSectorExpiration(ctx, maddr, sectorNumber, tsk)
@@ -683,20 +620,16 @@ func (msa *minerStateAPI) StateSectorExpiration(ctx context.Context, maddr addre
 
 // StateMinerSectorCount returns the number of sectors in a miner's sector set and proving set
 func (msa *minerStateAPI) StateMinerSectorCount(ctx context.Context, addr address.Address, tsk types.TipSetKey) (apitypes.MinerSectors, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
-		return apitypes.MinerSectors{}, xerrors.Errorf("failed to get tipset %v", err)
-	}
-
-	view, err := msa.ChainReader.ParentStateView(ts)
-	if err != nil {
-		return apitypes.MinerSectors{}, xerrors.Errorf("loading view %s: %v", tsk, err)
+		return apitypes.MinerSectors{}, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
 
 	mas, err := view.LoadMinerState(ctx, addr)
 	if err != nil {
 		return apitypes.MinerSectors{}, err
 	}
+
 	var activeCount, liveCount, faultyCount uint64
 	if err := mas.ForEachDeadline(func(_ uint64, dl miner.Deadline) error {
 		return dl.ForEachPartition(func(_ uint64, part miner.Partition) error {
@@ -731,11 +664,7 @@ func (msa *minerStateAPI) StateMinerSectorCount(ctx context.Context, addr addres
 
 // StateMarketBalance looks up the Escrow and Locked balances of the given address in the Storage Market
 func (msa *minerStateAPI) StateMarketBalance(ctx context.Context, addr address.Address, tsk types.TipSetKey) (apitypes.MarketBalance, error) {
-	ts, err := msa.ChainReader.GetTipSet(tsk)
-	if err != nil {
-		return apitypes.MarketBalanceNil, xerrors.Errorf("loading tipset %s: %v", tsk, err)
-	}
-	view, err := msa.ChainReader.ParentStateView(ts)
+	_, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
 		return apitypes.MarketBalanceNil, xerrors.Errorf("loading view %s: %v", tsk, err)
 	}

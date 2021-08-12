@@ -31,6 +31,9 @@ type EstimateResult struct {
 	Err string
 }
 
+const DefaultGasOverEstimation = 1.25
+const MinGasOverEsitimation = 1.0
+
 type MessageSendSpec struct {
 	MaxFee            abi.TokenAmount
 	GasOverEstimation float64

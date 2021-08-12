@@ -3,6 +3,8 @@ package consensus
 import "C"
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"golang.org/x/xerrors"
@@ -90,6 +92,8 @@ type chainReader interface {
 	GetTipSetByHeight(context.Context, *types.TipSet, abi.ChainEpoch, bool) (*types.TipSet, error)
 	GetCirculatingSupplyDetailed(context.Context, abi.ChainEpoch, tree.Tree) (chain.CirculatingSupply, error)
 	GetLookbackTipSetForRound(ctx context.Context, ts *types.TipSet, round abi.ChainEpoch, version network.Version) (*types.TipSet, cid.Cid, error)
+	GetTipsetMetadata(*types.TipSet) (*chain.TipSetMetadata, error)
+	PutTipSetMetadata(context.Context, *chain.TipSetMetadata) error
 }
 
 // Expected implements expected consensus.
@@ -105,8 +109,8 @@ type Expected struct {
 	// message store for message read/write
 	messageStore *chain.MessageStore
 
-	// chainState is a reference to the current Chain state
-	chainState chainReader
+	// chainStore is a reference to the current Chain state
+	chainStore chainReader
 
 	// processor is what we use to process messages and pay rewards
 	processor Processor
@@ -130,15 +134,11 @@ type Expected struct {
 	blockValidator *BlockValidator
 }
 
-// Ensure Expected satisfies the Protocol interface at compile time.
-var _ Protocol = (*Expected)(nil)
-
 // NewExpected is the constructor for the Expected consenus.Protocol module.
 func NewExpected(cs cbor.IpldStore,
 	bs blockstore.Blockstore,
 	bt time.Duration,
-	chainState chainReader,
-	rnd ChainRandomness,
+	chainStore *chain.Store,
 	messageStore *chain.MessageStore,
 	fork fork.IFork,
 	config *config.NetworkParamsConfig,
@@ -147,38 +147,57 @@ func NewExpected(cs cbor.IpldStore,
 	syscalls vm.SyscallsImpl,
 ) *Expected {
 	processor := NewDefaultProcessor(syscalls)
-	c := &Expected{
+	return &Expected{
 		processor:                   processor,
 		syscallsImpl:                syscalls,
 		cstore:                      cs,
 		bstore:                      bs,
-		chainState:                  chainState,
+		chainStore:                  chainStore,
+		rnd:                         chainStore,
 		messageStore:                messageStore,
-		rnd:                         rnd,
 		fork:                        fork,
 		gasPirceSchedule:            gasPirceSchedule,
 		blockValidator:              blockValidator,
-		circulatingSupplyCalculator: chain.NewCirculatingSupplyCalculator(bs, chainState, config.ForkUpgradeParam),
+		circulatingSupplyCalculator: chain.NewCirculatingSupplyCalculator(bs, chainStore, config.ForkUpgradeParam),
 	}
-	return c
 }
 
 // RunStateTransition applies the messages in a tipset to a state, and persists that new state.
 // It errors if the tipset was not mined according to the EC rules, or if any of the messages
 // in the tipset results in an error.
-func (c *Expected) RunStateTransition(ctx context.Context,
-	ts *types.TipSet,
-	parentStateRoot cid.Cid,
-) (cid.Cid, cid.Cid, error) {
-	ctx, span := trace.StartSpan(ctx, "Expected.RunStateTransition")
-	span.AddAttributes(trace.StringAttribute("tipset", ts.String()))
+func (c *Expected) RunStateTransition(ctx context.Context, ts *types.TipSet) (cid.Cid, cid.Cid, error) {
+	fmt.Printf("_sc|_______________runstatetransition begin(%d)\n_sc|\n", ts.Height())
+	logbuf := &strings.Builder{}
+	begin := time.Now()
 
+	defer func() {
+		_, _ = fmt.Fprintf(logbuf,
+			`_sc| total cost time = %.4f(seconds)
+_sc|-------------------------------------
+_sc|
+`, time.Since(begin).Seconds())
+		fmt.Printf(logbuf.String())
+	}()
+
+	_, _ = fmt.Fprintf(logbuf, "_sc|______RunStateTransaction(%d) details____________________\n"+
+		"_sc| tipset key:%s\n", ts.Height(), ts.Key().String())
+
+	ctx, span := trace.StartSpan(ctx, "Expected.innerRunStateTransition")
+	defer span.End()
+	span.AddAttributes(trace.StringAttribute("blocks", ts.String()))
+	span.AddAttributes(trace.Int64Attribute("height", int64(ts.Height())))
+
+	beginLoadTsMessage := time.Now()
 	blockMessageInfo, err := c.messageStore.LoadTipSetMessage(ctx, ts)
 	if err != nil {
-		return cid.Undef, cid.Undef, nil
+		_, _ = fmt.Fprintf(logbuf, "_sc| load tipset message failed::%s\n", err.Error())
+		return cid.Undef, cid.Undef, err
 	}
+	_, _ = fmt.Fprintf(logbuf, "_sc| load tipset message cost time:%.4f(s)\n",
+		time.Since(beginLoadTsMessage).Seconds())
 	// process tipset
 	var pts *types.TipSet
+
 	if ts.Height() == 0 {
 		// NB: This is here because the process that executes blocks requires that the
 		// block miner reference a valid miner in the state tree. Unless we create some
@@ -187,8 +206,8 @@ func (c *Expected) RunStateTransition(ctx context.Context,
 		return ts.Blocks()[0].ParentStateRoot, ts.Blocks()[0].ParentMessageReceipts, nil
 	} else if ts.Height() > 0 {
 		parent := ts.Parents()
-		pts, err = c.chainState.GetTipSet(parent)
-		if err != nil {
+		if pts, err = c.chainStore.GetTipSet(parent); err != nil {
+			_, _ = fmt.Fprintf(logbuf, "_sc| get parent tipset failed:%s\n", err.Error())
 			return cid.Undef, cid.Undef, err
 		}
 	} else {
@@ -202,7 +221,7 @@ func (c *Expected) RunStateTransition(ctx context.Context,
 
 	vmOption := vm.VmOption{
 		CircSupplyCalculator: func(ctx context.Context, epoch abi.ChainEpoch, tree tree.Tree) (abi.TokenAmount, error) {
-			dertail, err := c.chainState.GetCirculatingSupplyDetailed(ctx, epoch, tree)
+			dertail, err := c.chainStore.GetCirculatingSupplyDetailed(ctx, epoch, tree)
 			if err != nil {
 				return abi.TokenAmount{}, err
 			}
@@ -215,18 +234,27 @@ func (c *Expected) RunStateTransition(ctx context.Context,
 		Epoch:             ts.At(0).Height,
 		GasPriceSchedule:  c.gasPirceSchedule,
 		Bsstore:           c.bstore,
-		PRoot:             parentStateRoot,
+		PRoot:             ts.At(0).ParentStateRoot,
 		SysCallsImpl:      c.syscallsImpl,
 	}
+
+	beginProcessTipset := time.Now()
 	root, receipts, err := c.processor.ProcessTipSet(ctx, pts, ts, blockMessageInfo, vmOption)
 	if err != nil {
+		_, _ = fmt.Fprintf(logbuf, "_sc| processTipset failed:%s\n", err.Error())
 		return cid.Undef, cid.Undef, errors.Wrap(err, "error validating tipset")
 	}
+	_, _ = fmt.Fprintf(logbuf, "_sc| processTipset cost time:%.4f(s)\n",
+		time.Since(beginProcessTipset).Seconds())
 
+	beginStoreReceipts := time.Now()
 	receiptCid, err := c.messageStore.StoreReceipts(ctx, receipts)
 	if err != nil {
+		_, _ = fmt.Fprintf(logbuf, "_sc| store receipts failed:%s\n", err.Error())
 		return cid.Undef, cid.Undef, xerrors.Errorf("failed to save receipt: %v", err)
 	}
+	_, _ = fmt.Fprintf(logbuf, "_sc| storeReceipts cost time:%.4f(s)\n",
+		time.Since(beginStoreReceipts).Seconds())
 
 	return root, receiptCid, nil
 }
