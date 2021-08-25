@@ -212,7 +212,7 @@ _sc|
 				log.Warnf("\n_sc| ____incoming new block(%d, %s), slow fetch messages, cost time = %.4f(seconds)\n_sc|\n",
 					bm.Header.Height, bm.Header.Cid().String(), fetchTime.Seconds())
 			}
-			fmt.Printf("_sc|_____incoming new block(%d, %s), cost time = %.4f(seconds)\n_sc|\n",
+			fmt.Printf("_sc|____incoming new block(%d, %s), cost time = %.4f(seconds)\n_sc|\n",
 				bm.Header.Height, bm.Header.Cid().String(), time.Since(start).Seconds())
 		}()
 
