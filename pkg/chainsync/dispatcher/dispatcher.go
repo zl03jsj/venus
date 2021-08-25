@@ -183,7 +183,7 @@ func (d *Dispatcher) selectStableTarget(ch <-chan struct{}) (*types.Target, bool
 
 	const maxWaitCount = 2
 	var stabled = false
-	var duration = time.Millisecond * 150
+	var duration = time.Millisecond * 100
 
 	time.Sleep(duration)
 

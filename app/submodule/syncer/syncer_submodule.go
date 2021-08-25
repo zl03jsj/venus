@@ -44,9 +44,9 @@ type SyncerSubmodule struct { // nolint
 	NetworkModule      *network.NetworkSubmodule
 	DiscoverySubmodule *discovery.DiscoverySubmodule
 
-	BlockTopic       *pubsub.Topic
-	BlockSub         pubsub.Subscription
-	ChainSelector    nodeChainSelector
+	BlockTopic    *pubsub.Topic
+	BlockSub      pubsub.Subscription
+	ChainSelector nodeChainSelector
 	// Consensus        consensus.Protocol
 	ChainSyncManager *chainsync.Manager
 	Drand            beacon.Schedule
@@ -164,7 +164,6 @@ func NewSyncerSubmodule(ctx context.Context,
 		NetworkModule:      network,
 		DiscoverySubmodule: discovery,
 		SlashFilter:        slashFilter,
-		// Consensus:          stmgr,
 		ChainSelector:      nodeChainSelector,
 		ChainSyncManager:   &chainSyncManager,
 		Drand:              chn.Drand,
@@ -209,6 +208,11 @@ _sc|
 			return
 		}
 
+		if delay := uint64(time.Now().Unix()) - bm.Header.Timestamp; delay > 5 {
+			fmt.Printf("_sc| received block with large delay(%d(seconds)), cid:%s\n_sc|\n",
+				delay, bm.Header.Cid())
+		}
+
 		_, err = syncer.NetworkModule.FetchSignedMessagesByCids(ctx, bm.SecpkMessages)
 		if err != nil {
 			log.Errorf("failed to fetch all secpk messages for block received over pubusb: %s; source: %s", err, source)
@@ -216,12 +220,8 @@ _sc|
 		}
 
 		if took := time.Since(start); took > 3*time.Second {
-			fmt.Printf("_sc| slow fetch block message: cid:%s\n_sc|\n", bm.Header.Cid().String())
-		}
-
-		if delay := uint64(time.Now().Unix()) - bm.Header.Timestamp; delay > 5 {
-			fmt.Printf("_sc| received block with large delay(%d(seconds)), cid:%s\n_sc|\n",
-				delay, bm.Header.Cid())
+			fmt.Printf("_sc| slow fetch block message: cid:%s, cost time = %.4f(seconds)\n_sc|\n",
+				took.Seconds(), bm.Header.Cid().String())
 		}
 
 		syncer.NetworkModule.Host.ConnManager().TagPeer(sender, "new-block", 20)
