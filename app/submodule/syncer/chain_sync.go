@@ -28,3 +28,5 @@ func NewChainSyncProvider(chainSyncer chainSync) *ChainSyncProvider {
 func (chs *ChainSyncProvider) HandleNewTipSet(ci *types.ChainInfo) error {
 	return chs.sync.BlockProposer().SendOwnBlock(ci)
 }
+
+const blockLargeDelayDuration = 4

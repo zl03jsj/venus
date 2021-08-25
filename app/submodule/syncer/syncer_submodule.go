@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/Gurpartap/async"
+	"github.com/filecoin-project/lotus/force/utils"
 	chain2 "github.com/filecoin-project/venus/app/submodule/chain"
 	"github.com/filecoin-project/venus/pkg/clock"
 	"github.com/filecoin-project/venus/pkg/statemanger"
+	"github.com/filecoin-project/venus/pkg/util/paralle"
+	"golang.org/x/xerrors"
 	"reflect"
 	"runtime"
 	"time"
@@ -196,32 +200,46 @@ func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pu
 		log.Errorf("failed to save block %s", err)
 	}
 	go func() {
-		start := time.Now()
 		fmt.Printf(`_sc|____incomming new block:%d________
 _sc| block_cid:%s
 _sc|
 `, header.Height, header.Cid().String())
 
-		_, err = syncer.NetworkModule.FetchMessagesByCids(ctx, bm.BlsMessages)
-		if err != nil {
-			log.Errorf("failed to fetch all bls messages for block received over pubusb: %s; source: %s", err, source)
-			return
-		}
+		start := time.Now()
+		var fetchTime time.Duration
+		var errs *paralle.MultiError
+
+		defer func() {
+			if fetchTime > 3*time.Second {
+				log.Warnf("\n_sc| ____incoming new block(%d, %s), slow fetch messages, cost time = %.4f(seconds)\n_sc|\n",
+					bm.Header.Height, bm.Header.Cid().String(), fetchTime.Seconds())
+			}
+			fmt.Printf("_sc|_____imcomming new block(%d, %s), cost time = %.4f(seconds)\n_sc|\n",
+				bm.Header.Height, bm.Header.Cid().String(), time.Since(start).Seconds())
+		}()
 
 		if delay := uint64(time.Now().Unix()) - bm.Header.Timestamp; delay > 5 {
 			log.Warnf("\n_sc| received block with large delay(%d(seconds)), cid:%s\n_sc|\n",
 				delay, bm.Header.Cid())
 		}
 
-		_, err = syncer.NetworkModule.FetchSignedMessagesByCids(ctx, bm.SecpkMessages)
-		if err != nil {
-			log.Errorf("failed to fetch all secpk messages for block received over pubusb: %s; source: %s", err, source)
-			return
-		}
+		par := paralle.NewPar(2)
+		par.Go(func() error {
+			if _, err := syncer.NetworkModule.FetchMessagesByCids(ctx, bm.BlsMessages); err != nil {
+				return xerrors.Errorf("fetch block bls messages failed:%w", source, err)
+			}
+			return nil
+		})
+		par.Go(func() error {
+			if _, err := syncer.NetworkModule.FetchSignedMessagesByCids(ctx, bm.SecpkMessages); err != nil {
+				return xerrors.Errorf("fetch block  messages failed:%w", source, err)
+			}
+			return nil
+		})
 
-		if took := time.Since(start); took > 3*time.Second {
-			log.Warnf("\n_sc| slow fetch block message: cid:%s, cost time = %.4f(seconds)\n_sc|\n",
-				took.Seconds(), bm.Header.Cid().String())
+		if fetchTime, errs = par.Wait(); errs.Len() != 0 {
+			log.Errorf("\nfetch p2p(%s) incoming block messages failed:%s", errs.Error())
+			return
 		}
 
 		syncer.NetworkModule.Host.ConnManager().TagPeer(sender, "new-block", 20)
@@ -233,8 +251,7 @@ _sc|
 		if err = syncer.ChainSyncManager.BlockProposer().SendGossipBlock(chainInfo); err != nil {
 			log.Errorf("failed to notify syncer of new block, block: %s", err)
 		}
-		fmt.Printf("_sc|_____imcomming new block(%d) cost time = %.4f(seconds)\n_sc|\n",
-			bm.Header.Height, time.Since(start).Seconds())
+
 	}()
 	return nil
 }

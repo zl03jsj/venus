@@ -2,6 +2,7 @@ package paralle
 
 import (
 	"sync"
+	"time"
 )
 
 type Par struct {
@@ -59,7 +60,8 @@ func (this *Par) GoV2(f func(args ...interface{}) error, args ...interface{}) {
 	}()
 }
 
-func (this *Par) Wait() *MultiError {
+func (this *Par) Wait() (time.Duration, *MultiError) {
+	begin := time.Now()
 	this.group.Wait()
-	return this.errs
+	return time.Since(begin), this.errs
 }
