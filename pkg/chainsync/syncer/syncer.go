@@ -645,7 +645,7 @@ func (syncer *Syncer) fetchSegMessage(ctx context.Context, segTipset []*types.Ti
 
 	}
 
-	if ers := par.Wait(); ers.Len() > 0 {
+	if _, ers := par.Wait(); ers.Len() > 0 {
 		return nil, ers.ERR()
 	}
 
