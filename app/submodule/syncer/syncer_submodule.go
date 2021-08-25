@@ -200,7 +200,7 @@ func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pu
 		fmt.Printf(`_sc|____incomming new block:%d________
 _sc| block_cid:%s
 _sc|
-`, header.Height, header.Cid().String(), header.Parents.String())
+`, header.Height, header.Cid().String())
 
 		_, err = syncer.NetworkModule.FetchMessagesByCids(ctx, bm.BlsMessages)
 		if err != nil {
