@@ -232,7 +232,7 @@ _sc| blocks : %s
 		}
 	}
 
-	_, _ = fmt.Fprintf(logbuf, "_sc| validateFullblocks(%d) cost time:%.4f(seconds)\n",
+	_, _ = fmt.Fprintf(logbuf, "_sc| validateFullblocks(%d) cost time = %.4f(seconds)\n",
 		child.Len(), time.Since(beginValidateBlocks).Seconds())
 
 	return nil
@@ -325,7 +325,7 @@ _sc|blocks:%s
 		}
 		tracing.AddErrorEndSpan(ctx, span, &err)
 		_, _ = fmt.Fprintf(buf, `
-_sc|total cost time:%.4f(seconds)
+_sc|total const time = %.4f(seconds)
 _sc|------------------------------------------------------		
 _sc|
 `, time.Since(now).Seconds())
@@ -346,14 +346,14 @@ _sc|
 	if err != nil {
 		return errors.Wrapf(err, "failure fetching or validating headers")
 	}
-	_, _ = fmt.Fprintf(buf, "_sc|fetchChainBlock(%d), cost time:%d\n",
+	_, _ = fmt.Fprintf(buf, "_sc|fetchChainBlock(%d), const time = %d\n",
 		target.Head.Len(), time.Since(now).Milliseconds())
 
 	logSyncer.Infof("fetch header success at %v %s ...", tipsets[0].Height(), tipsets[0].Key())
 
 	err = syncer.syncSegement(ctx, target, tipsets)
 
-	_, _ = fmt.Fprintf(buf, "_sc|syncSegment cost time:%.4f(seconds)\n",
+	_, _ = fmt.Fprintf(buf, "_sc|syncSegment const time = %.4f(seconds)\n",
 		time.Since(now).Seconds())
 
 	if err != nil {

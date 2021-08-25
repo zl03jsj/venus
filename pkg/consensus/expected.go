@@ -193,7 +193,7 @@ _sc|
 		_, _ = fmt.Fprintf(logbuf, "_sc| load tipset message failed::%s\n", err.Error())
 		return cid.Undef, cid.Undef, err
 	}
-	_, _ = fmt.Fprintf(logbuf, "_sc| load tipset message cost time:%.4f(s)\n",
+	_, _ = fmt.Fprintf(logbuf, "_sc| load tipset message const time = %.4f(s)\n",
 		time.Since(beginLoadTsMessage).Seconds())
 	// process tipset
 	var pts *types.TipSet
@@ -244,7 +244,7 @@ _sc|
 		_, _ = fmt.Fprintf(logbuf, "_sc| processTipset failed:%s\n", err.Error())
 		return cid.Undef, cid.Undef, errors.Wrap(err, "error validating tipset")
 	}
-	_, _ = fmt.Fprintf(logbuf, "_sc| processTipset cost time:%.4f(s)\n",
+	_, _ = fmt.Fprintf(logbuf, "_sc| processTipset cost time = %.4f(s)\n",
 		time.Since(beginProcessTipset).Seconds())
 
 	beginStoreReceipts := time.Now()
@@ -253,7 +253,7 @@ _sc|
 		_, _ = fmt.Fprintf(logbuf, "_sc| store receipts failed:%s\n", err.Error())
 		return cid.Undef, cid.Undef, xerrors.Errorf("failed to save receipt: %v", err)
 	}
-	_, _ = fmt.Fprintf(logbuf, "_sc| storeReceipts cost time:%.4f(s)\n",
+	_, _ = fmt.Fprintf(logbuf, "_sc| storeReceipts const time = %.4f(s)\n",
 		time.Since(beginStoreReceipts).Seconds())
 
 	return root, receiptCid, nil
