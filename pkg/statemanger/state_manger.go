@@ -301,15 +301,11 @@ func (c *Stmgr) ParentStateView(ctx context.Context, ts *types.TipSet) (*types.T
 		return nil, nil, err
 	}
 
-	if _, _, err := c.RunStateTransition(ctx, parent); err != nil {
-		return nil, nil, xerrors.Errorf("runStateTransition failed:%w", err)
-	}
-
-	view, err := c.cs.ParentStateView(ts)
+	_, view, err := c.StateView(ctx, parent)
 	if err != nil {
-		return nil, nil, xerrors.Errorf("parentStateView failed:%w", err)
+		return nil, nil, xerrors.Errorf("StateView failed:%w", err)
 	}
-	return ts, view, nil
+	return parent, view, nil
 }
 
 func (c *Stmgr) StateViewTsk(ctx context.Context, tsk types.TipSetKey) (cid.Cid, *appstate.View, error) {

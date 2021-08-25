@@ -105,7 +105,7 @@ func (ti *TipStateCache) Get(ts *types.TipSet) (*TipSetMetadata, error) {
 	if !ok {
 		tipSetMetadata, err := ti.loader.LoadTipsetMetadata(ts)
 		if err != nil {
-			return nil, xerrors.New("state not exit")
+			return nil, xerrors.New("state not exist")
 		}
 
 		err = ti.put(tipSetMetadata)
