@@ -233,7 +233,7 @@ _sc|
 		if err = syncer.ChainSyncManager.BlockProposer().SendGossipBlock(chainInfo); err != nil {
 			log.Errorf("failed to notify syncer of new block, block: %s", err)
 		}
-		fmt.Printf("_sc|_____imcomming new block(%d) cost time = %.4f(seconds)\n",
+		fmt.Printf("_sc|_____imcomming new block(%d) cost time = %.4f(seconds)\n_sc|\n",
 			bm.Header.Height, time.Since(start).Seconds())
 	}()
 	return nil
