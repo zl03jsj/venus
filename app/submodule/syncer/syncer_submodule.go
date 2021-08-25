@@ -174,7 +174,7 @@ func NewSyncerSubmodule(ctx context.Context,
 	}, nil
 }
 
-func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pubsub.Message) error {
+func (syncer *SyncerSubmodule) handleIncomingBlocks(ctx context.Context, msg pubsub.Message) error {
 	sender := msg.GetSender()
 	source := msg.GetSource()
 	// ignore messages from self
@@ -182,7 +182,7 @@ func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pu
 		return nil
 	}
 
-	ctx, span := trace.StartSpan(ctx, "Node.handleIncommingBlocks")
+	ctx, span := trace.StartSpan(ctx, "Node.handleIncomingBlocks")
 
 	var bm types.BlockMsg
 	err := bm.UnmarshalCBOR(bytes.NewReader(msg.GetData()))
@@ -198,7 +198,7 @@ func (syncer *SyncerSubmodule) handleIncommingBlocks(ctx context.Context, msg pu
 		log.Errorf("failed to save block %s", err)
 	}
 	go func() {
-		fmt.Printf(`_sc|____incomming new block:%d________
+		fmt.Printf(`_sc|____incoming new block:%d________
 _sc| block_cid:%s
 _sc|
 `, header.Height, header.Cid().String())
@@ -212,7 +212,7 @@ _sc|
 				log.Warnf("\n_sc| ____incoming new block(%d, %s), slow fetch messages, cost time = %.4f(seconds)\n_sc|\n",
 					bm.Header.Height, bm.Header.Cid().String(), fetchTime.Seconds())
 			}
-			fmt.Printf("_sc|_____imcomming new block(%d, %s), cost time = %.4f(seconds)\n_sc|\n",
+			fmt.Printf("_sc|_____incoming new block(%d, %s), cost time = %.4f(seconds)\n_sc|\n",
 				bm.Header.Height, bm.Header.Cid().String(), time.Since(start).Seconds())
 		}()
 
@@ -304,8 +304,8 @@ func (syncer *SyncerSubmodule) Start(ctx context.Context) error {
 				return
 			}
 
-			if err := syncer.handleIncommingBlocks(ctx, received); err != nil {
-				handlerName := runtime.FuncForPC(reflect.ValueOf(syncer.handleIncommingBlocks).Pointer()).Name()
+			if err := syncer.handleIncomingBlocks(ctx, received); err != nil {
+				handlerName := runtime.FuncForPC(reflect.ValueOf(syncer.handleIncomingBlocks).Pointer()).Name()
 				if err != context.Canceled {
 					log.Debugf("error in handler %s for topic %s: %s", handlerName, syncer.BlockSub.Topic(), err)
 				}
