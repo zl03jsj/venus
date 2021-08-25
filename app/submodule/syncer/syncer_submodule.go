@@ -208,7 +208,7 @@ _sc|
 		var errs *paralle.MultiError
 
 		defer func() {
-			if fetchTime > 3*time.Second {
+			if fetchTime > slowFetchMessageDuration {
 				log.Warnf("\n_sc| ____incoming new block(%d, %s), slow fetch messages, cost time = %.4f(seconds)\n_sc|\n",
 					bm.Header.Height, bm.Header.Cid().String(), fetchTime.Seconds())
 			}
@@ -216,7 +216,7 @@ _sc|
 				bm.Header.Height, bm.Header.Cid().String(), time.Since(start).Seconds())
 		}()
 
-		if delay := uint64(time.Now().Unix()) - bm.Header.Timestamp; delay > 5 {
+		if delay := uint64(time.Now().Unix()) - bm.Header.Timestamp; delay > incomeBlockLargeDelayDuration {
 			log.Warnf("\n_sc| received block with large delay(%d(seconds)), cid:%s\n_sc|\n",
 				delay, bm.Header.Cid())
 		}

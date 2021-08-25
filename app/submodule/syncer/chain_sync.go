@@ -3,6 +3,7 @@ package syncer
 import (
 	"github.com/filecoin-project/venus/pkg/chainsync"
 	"github.com/filecoin-project/venus/pkg/types"
+	"time"
 )
 
 type chainSync interface {
@@ -29,4 +30,5 @@ func (chs *ChainSyncProvider) HandleNewTipSet(ci *types.ChainInfo) error {
 	return chs.sync.BlockProposer().SendOwnBlock(ci)
 }
 
-const blockLargeDelayDuration = 4
+const incomeBlockLargeDelayDuration = 5
+const slowFetchMessageDuration = time.Second * 3
