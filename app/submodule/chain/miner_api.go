@@ -589,7 +589,11 @@ func (msa *minerStateAPI) StateMinerPower(ctx context.Context, addr address.Addr
 
 // StateMinerAvailableBalance returns the portion of a miner's balance that can be withdrawn or spent
 func (msa *minerStateAPI) StateMinerAvailableBalance(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (big.Int, error) {
-	ts, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
+	if err != nil {
+		return big.Int{}, xerrors.Errorf("GetTipset failed:%w", err)
+	}
+	_, view, err := msa.Stmgr.ParentStateView(ctx, ts)
 	if err != nil {
 		return big.Int{}, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
