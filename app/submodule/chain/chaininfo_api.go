@@ -117,9 +117,6 @@ func (cia *chainInfoAPI) GetActor(ctx context.Context, addr address.Address) (*t
 
 // GetParentStateRootActor get the ts ParentStateRoot actor
 func (cia *chainInfoAPI) GetParentStateRootActor(ctx context.Context, ts *types.TipSet, addr address.Address) (*types.Actor, error) {
-	if ts == nil {
-		ts = cia.chain.ChainStore.GetHead()
-	}
 	_, v, err := cia.chain.Stmgr.ParentStateView(ctx, ts)
 	if err != nil {
 		return nil, err

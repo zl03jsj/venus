@@ -152,11 +152,7 @@ func (msa *minerStateAPI) StateMinerFaults(ctx context.Context, maddr address.Ad
 // StateMinerProvingDeadline calculates the deadline at some epoch for a proving period
 // and returns the deadline-related calculations.
 func (msa *minerStateAPI) StateMinerProvingDeadline(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (*dline.Info, error) {
-	ts, err := msa.ChainStore.GetTipSet(tsk)
-	if err != nil {
-		return nil, err
-	}
-	_, view, err := msa.Stmgr.ParentStateView(ctx, ts)
+	parent, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
 	if err != nil {
 		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
@@ -165,7 +161,7 @@ func (msa *minerStateAPI) StateMinerProvingDeadline(ctx context.Context, maddr a
 	if err != nil {
 		return nil, xerrors.Errorf("failed to load miner actor state: %v", err)
 	}
-	di, err := mas.DeadlineInfo(ts.Height())
+	di, err := mas.DeadlineInfo(parent.Height() + 1)
 	if err != nil {
 		return nil, xerrors.Errorf("failed to get deadline info: %v", err)
 	}
@@ -335,19 +331,14 @@ var initialPledgeDen = big.NewInt(100)
 
 // StateMinerInitialPledgeCollateral returns the precommit deposit for the specified miner's sector
 func (msa *minerStateAPI) StateMinerPreCommitDepositForPower(ctx context.Context, maddr address.Address, pci miner.SectorPreCommitInfo, tsk types.TipSetKey) (big.Int, error) {
-	store := msa.ChainStore.Store(ctx)
 	ts, err := msa.ChainStore.GetTipSet(tsk)
 	if err != nil {
 		return big.Int{}, err
 	}
 
-	if _, _, err = msa.Stmgr.RunStateTransition(ctx, ts); err != nil {
-		return big.Int{}, xerrors.Errorf("runstateTransition failed:%w", err)
-	}
-
-	sTree, err := tree.LoadState(ctx, store, ts.At(0).ParentStateRoot)
-	if err != nil {
-		return big.Int{}, err
+	var state *tree.State
+	if _, state, err = msa.Stmgr.ParentState(ctx, ts); err != nil {
+		return big.Int{}, xerrors.Errorf("ParentState failed:%w", err)
 	}
 
 	ssize, err := pci.SealProof.SectorSize()
@@ -355,8 +346,9 @@ func (msa *minerStateAPI) StateMinerPreCommitDepositForPower(ctx context.Context
 		return big.Int{}, xerrors.Errorf("failed to get resolve size: %v", err)
 	}
 
+	store := msa.ChainStore.Store(ctx)
 	var sectorWeight abi.StoragePower
-	if act, found, err := sTree.GetActor(ctx, market.Address); err != nil || !found {
+	if act, found, err := state.GetActor(ctx, market.Address); err != nil || !found {
 		return big.Int{}, xerrors.Errorf("loading market actor %s: %v", maddr, err)
 	} else if s, err := market.Load(store, act); err != nil {
 		return big.Int{}, xerrors.Errorf("loading market actor state %s: %v", maddr, err)
@@ -369,7 +361,7 @@ func (msa *minerStateAPI) StateMinerPreCommitDepositForPower(ctx context.Context
 	}
 
 	var powerSmoothed builtin.FilterEstimate
-	if act, found, err := sTree.GetActor(ctx, power.Address); err != nil || !found {
+	if act, found, err := state.GetActor(ctx, power.Address); err != nil || !found {
 		return big.Int{}, xerrors.Errorf("loading power actor: %v", err)
 	} else if s, err := power.Load(store, act); err != nil {
 		return big.Int{}, xerrors.Errorf("loading power actor state: %v", err)
@@ -379,7 +371,7 @@ func (msa *minerStateAPI) StateMinerPreCommitDepositForPower(ctx context.Context
 		powerSmoothed = p
 	}
 
-	rewardActor, found, err := sTree.GetActor(ctx, reward.Address)
+	rewardActor, found, err := state.GetActor(ctx, reward.Address)
 	if err != nil || !found {
 		return big.Int{}, xerrors.Errorf("loading miner actor: %v", err)
 	}

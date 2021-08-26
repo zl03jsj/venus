@@ -282,12 +282,10 @@ func (c *Stmgr) RunStateTransitionV2(ctx context.Context, ts *types.TipSet) (cid
 }
 
 func (c *Stmgr) ParentStateViewTsk(ctx context.Context, tsk types.TipSetKey) (*types.TipSet, *appstate.View, error) {
-	var ts *types.TipSet
-
-	if tsk.Equals(types.EmptyTSK) {
-		ts = c.cs.GetHead()
+	ts, err := c.cs.GetTipSet(tsk)
+	if err != nil {
+		return nil, nil, err
 	}
-
 	return c.ParentStateView(ctx, ts)
 }
 
@@ -295,7 +293,6 @@ func (c *Stmgr) ParentStateView(ctx context.Context, ts *types.TipSet) (*types.T
 	if ts == nil {
 		ts = c.cs.GetHead()
 	}
-
 	parent, err := c.cs.GetTipSet(ts.Parents())
 	if err != nil {
 		return nil, nil, err
