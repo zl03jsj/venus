@@ -152,7 +152,12 @@ func (msa *minerStateAPI) StateMinerFaults(ctx context.Context, maddr address.Ad
 // StateMinerProvingDeadline calculates the deadline at some epoch for a proving period
 // and returns the deadline-related calculations.
 func (msa *minerStateAPI) StateMinerProvingDeadline(ctx context.Context, maddr address.Address, tsk types.TipSetKey) (*dline.Info, error) {
-	parent, view, err := msa.Stmgr.ParentStateViewTsk(ctx, tsk)
+	ts, err := msa.ChainStore.GetTipSet(tsk)
+	if err != nil {
+		return nil, xerrors.Errorf("GetTipset failed:%w", err)
+	}
+
+	_, view, err := msa.Stmgr.ParentStateView(ctx, ts)
 	if err != nil {
 		return nil, xerrors.Errorf("Stmgr.ParentStateViewTsk failed:%w", err)
 	}
@@ -161,7 +166,8 @@ func (msa *minerStateAPI) StateMinerProvingDeadline(ctx context.Context, maddr a
 	if err != nil {
 		return nil, xerrors.Errorf("failed to load miner actor state: %v", err)
 	}
-	di, err := mas.DeadlineInfo(parent.Height() + 1)
+
+	di, err := mas.DeadlineInfo(ts.Height())
 	if err != nil {
 		return nil, xerrors.Errorf("failed to get deadline info: %v", err)
 	}
