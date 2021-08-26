@@ -517,21 +517,12 @@ func (msa *minerStateAPI) StateMinerActiveSectors(ctx context.Context, maddr add
 
 // StateLookupID retrieves the ID address of the given address
 func (msa *minerStateAPI) StateLookupID(ctx context.Context, addr address.Address, tsk types.TipSetKey) (address.Address, error) {
-	ts, err := msa.ChainStore.GetTipSet(tsk)
+	_, state, err := msa.Stmgr.ParentStateTsk(ctx, tsk)
 	if err != nil {
-		return address.Undef, xerrors.Errorf("failed to get tipset %v", err)
+		return address.Undef, xerrors.Errorf("load state failed: %w", err)
 	}
 
-	if _, _, err := msa.Stmgr.RunStateTransition(ctx, ts); err != nil {
-		return address.Undef, xerrors.Errorf("runStateTransition failed:%w", err)
-	}
-
-	tsState, err := msa.ChainStore.GetTipSetState(ctx, ts)
-	if err != nil {
-		return address.Undef, xerrors.Errorf("load state tree: %v", err)
-	}
-
-	return tsState.LookupID(addr)
+	return state.LookupID(addr)
 }
 
 // StateListMiners returns the addresses of every miner that has claimed power in the Power Actor

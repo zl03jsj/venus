@@ -296,11 +296,7 @@ func (cia *chainInfoAPI) ResolveToKeyAddr(ctx context.Context, addr address.Addr
 	if ts == nil {
 		ts = cia.chain.ChainStore.GetHead()
 	}
-	_, viewer, err := cia.chain.Stmgr.ParentStateView(ctx, ts)
-	if err != nil {
-		return address.Undef, err
-	}
-	return viewer.ResolveToKeyAddr(ctx, addr)
+	return cia.chain.Stmgr.ResolveToKeyAddress(ctx, addr, ts)
 }
 
 // ************Drand****************//
